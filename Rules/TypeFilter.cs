@@ -109,6 +109,7 @@ public static class TypeFilter
     public static List<TypeDef> CollectDependencies(List<TypeDef> requestedTypes, List<TypeDef> allTypes)
     {
         var typesByFullName = allTypes.GroupBy(t => t.FullName).ToDictionary(g => g.Key, g => g.First());
+        var typesByName = allTypes.GroupBy(t => GetCleanTypeName(t.Name.String)).ToDictionary(g => g.Key, g => g.First());
         var result = new HashSet<TypeDef>(requestedTypes);
         var toProcess = new Queue<TypeDef>(requestedTypes);
         var processed = new HashSet<string>();
@@ -120,11 +121,36 @@ public static class TypeFilter
                 continue;
 
             foreach (var refTypeName in GetReferencedTypeNames(typeDef))
-                if (typesByFullName.TryGetValue(refTypeName, out var refType) && result.Add(refType))
+            {
+                var refType = ResolveType(refTypeName, typesByFullName, typesByName);
+                if (refType is not null && result.Add(refType))
                     toProcess.Enqueue(refType);
+            }
         }
 
         return [.. result];
+    }
+
+    private static TypeDef? ResolveType(
+        string typeName,
+        Dictionary<string, TypeDef> byFullName,
+        Dictionary<string, TypeDef> byName)
+    {
+        if (byFullName.TryGetValue(typeName, out var result))
+            return result;
+
+        var cleanName = GetCleanTypeName(typeName);
+        if (byFullName.TryGetValue(cleanName, out result))
+            return result;
+
+        var simpleName = cleanName.Contains('.') ? cleanName[(cleanName.LastIndexOf('.') + 1)..] : cleanName;
+        return byName.GetValueOrDefault(simpleName);
+    }
+
+    private static string GetCleanTypeName(string name)
+    {
+        var idx = name.IndexOf('`');
+        return idx > 0 ? name[..idx] : name;
     }
 
     private static IEnumerable<string> GetReferencedTypeNames(TypeDef typeDef)
@@ -133,13 +159,13 @@ public static class TypeFilter
             yield return typeDef.BaseType.FullName;
 
         foreach (var field in typeDef.Fields.Where(f => f.IsPublic || (typeDef.IsValueType && !f.IsStatic)))
-        foreach (var name in GetTypeNames(field.FieldType))
-            yield return name;
+            foreach (var name in GetTypeNames(field.FieldType))
+                yield return name;
 
         foreach (var prop in typeDef.Properties.Where(p =>
                      (p.GetMethod?.IsPublic ?? false) || (p.SetMethod?.IsPublic ?? false)))
-        foreach (var name in GetTypeNames(prop.PropertySig?.RetType))
-            yield return name;
+            foreach (var name in GetTypeNames(prop.PropertySig?.RetType))
+                yield return name;
 
         foreach (var method in typeDef.Methods.Where(m => !m.IsGetter && !m.IsSetter))
         {
@@ -151,8 +177,8 @@ public static class TypeFilter
                 yield return name;
 
             foreach (var param in method.Parameters.Where(p => p.IsNormalMethodParameter))
-            foreach (var name in GetTypeNames(param.Type))
-                yield return name;
+                foreach (var name in GetTypeNames(param.Type))
+                    yield return name;
         }
     }
 
@@ -185,8 +211,8 @@ public static class TypeFilter
                 if (genericSig.GenericType is not null)
                     yield return genericSig.GenericType.FullName;
                 foreach (var arg in genericSig.GenericArguments)
-                foreach (var name in GetTypeNames(arg))
-                    yield return name;
+                    foreach (var name in GetTypeNames(arg))
+                        yield return name;
                 break;
 
             case ArraySigBase arraySig:
