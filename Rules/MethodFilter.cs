@@ -18,8 +18,7 @@ public static class MethodFilter
         return false;
     }
 
-    public static bool IsOperator(MethodDef method) =>
-        method.IsSpecialName && method.Name.String.StartsWith("op_");
+    public static bool IsOperator(MethodDef method) => method.IsSpecialName && method.Name.String.StartsWith("op_");
 
     public static bool IsPublicOrICall(MethodDef method, Func<MethodDef, bool> isICallCheck) =>
         method.IsPublic || ((method.IsAssembly || method.IsPrivate) && isICallCheck(method));

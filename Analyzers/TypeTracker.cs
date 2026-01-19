@@ -45,7 +45,8 @@ public static class TypeTracker
         }
     }
 
-    public static void TrackExternalType(TypeSig? typeSig, string currentAssemblyName, Dictionary<string, string> externalTypes)
+    public static void TrackExternalType(TypeSig? typeSig, string currentAssemblyName,
+        Dictionary<string, string> externalTypes)
     {
         if (typeSig is null)
             return;
@@ -83,9 +84,10 @@ public static class TypeTracker
                 if (module is not null)
                 {
                     var typeName = GetCleanTypeNameFromSig(typeSig);
-                    if (!string.IsNullOrEmpty(typeName) && !externalTypes.ContainsKey(typeName))
-                        externalTypes[typeName] = module;
+                    if (!string.IsNullOrEmpty(typeName))
+                        externalTypes.TryAdd(typeName, module);
                 }
+
                 break;
         }
     }
@@ -113,10 +115,9 @@ public static class TypeTracker
         if (string.IsNullOrEmpty(scopeName))
             return null;
 
-        if (string.Equals(scopeName, currentAssemblyName, StringComparison.OrdinalIgnoreCase))
-            return null;
-
-        return $"{scopeName}.dll";
+        return string.Equals(scopeName, currentAssemblyName, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : $"{scopeName}.dll";
     }
 
     private static string GetAssemblyName(IScope scope)
@@ -139,7 +140,7 @@ public static class TypeTracker
         return scopeName;
     }
 
-    public static string? GetTypeModule(TypeSig? typeSig, string currentAssemblyName)
+    private static string? GetTypeModule(TypeSig? typeSig, string currentAssemblyName)
     {
         if (typeSig is null)
             return null;

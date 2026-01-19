@@ -24,7 +24,8 @@ public static class StructWriter
             ? "#[derive(Clone, Copy, Default, PartialEq, UnityClass)]"
             : "#[derive(Clone, Default, PartialEq, UnityClass)]");
 
-        sb.AppendLine($"#[unity(assembly = \"{assembly}\", class = \"{className}\", namespace = \"{ns}\", value_type)]");
+        sb.AppendLine(
+            $"#[unity(assembly = \"{assembly}\", class = \"{className}\", namespace = \"{ns}\", value_type)]");
         sb.AppendLine($"pub struct {cls.Name} {{");
 
         foreach (var field in cls.Fields.Where(f => !f.IsStatic))

@@ -39,7 +39,7 @@ public static class ImportWriter
         localTypes.ExceptWith(inheritanceTypes);
 
         WriteSystemTypeImports(sb, systemTypes);
-        WriteLocalTypeImports(sb, localTypes, cls, context);
+        WriteLocalTypeImports(sb, localTypes, cls);
         WriteInheritanceImports(sb, cls, schema);
     }
 
@@ -146,9 +146,9 @@ public static class ImportWriter
             return;
         }
 
-        if (char.IsUpper(baseName[0]) && baseName.All(c => char.IsLetterOrDigit(c) || c == '_'))
-            if (context.ValidSchemaTypes.Contains(baseName) || context.ExternalTypeNames.Contains(baseName))
-                localTypes.Add(baseName);
+        if (!char.IsUpper(baseName[0]) || !baseName.All(c => char.IsLetterOrDigit(c) || c == '_')) return;
+        if (context.ValidSchemaTypes.Contains(baseName) || context.ExternalTypeNames.Contains(baseName))
+            localTypes.Add(baseName);
     }
 
     private static void WriteSystemTypeImports(StringBuilder sb, HashSet<string> systemTypes)
@@ -180,15 +180,15 @@ public static class ImportWriter
             sb.AppendLine($"use crate::mscorlib::io::{{{string.Join(", ", ioTypes)}}};");
     }
 
-    private static void WriteLocalTypeImports(StringBuilder sb, HashSet<string> localTypes, Il2CppClass cls, WriterContext context)
+    private static void WriteLocalTypeImports(StringBuilder sb, HashSet<string> localTypes, Il2CppClass cls)
     {
         var nestedTypeParents = new HashSet<string>();
         var sameModuleTypes = new HashSet<string>();
         var externalTypesByModule = new Dictionary<string, HashSet<string>>();
         var inheritanceTypes = cls.InheritanceChain.Select(b => b.Name).ToHashSet();
 
-        foreach (var typeName in localTypes.Where(typeName => typeName != cls.Name && !inheritanceTypes.Contains(typeName)))
-        {
+        foreach (var typeName in localTypes.Where(typeName =>
+                     typeName != cls.Name && !inheritanceTypes.Contains(typeName)))
             if (typeName.Contains("::"))
             {
                 var parentModule = TypeNameUtils.GetNestedTypeParent(typeName);
@@ -212,7 +212,6 @@ public static class ImportWriter
                     sameModuleTypes.Add(typeName);
                 }
             }
-        }
 
         foreach (var parentModule in nestedTypeParents.OrderBy(t => t))
             sb.AppendLine($"use super::{parentModule};");
@@ -273,12 +272,17 @@ public static class ImportWriter
         foreach (var moduleName in typesByModule.Keys.OrderBy(m => m))
         {
             var types = typesByModule[moduleName].OrderBy(t => t).ToList();
-            if (types.Count == 0)
-                continue;
-            if (types.Count == 1)
-                sb.AppendLine($"use crate::{moduleName}::{types[0]};");
-            else
-                sb.AppendLine($"use crate::{moduleName}::{{{string.Join(", ", types)}}};");
+            switch (types.Count)
+            {
+                case 0:
+                    continue;
+                case 1:
+                    sb.AppendLine($"use crate::{moduleName}::{types[0]};");
+                    break;
+                default:
+                    sb.AppendLine($"use crate::{moduleName}::{{{string.Join(", ", types)}}};");
+                    break;
+            }
         }
     }
 }

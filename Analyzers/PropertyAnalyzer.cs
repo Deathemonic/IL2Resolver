@@ -34,10 +34,7 @@ public static class PropertyAnalyzer
 
     private static (string? Name, List<string>? Params) GetInjectedICallInfo(MethodDef? method)
     {
-        if (method is null || !method.HasBody)
-            return (null, null);
-
-        if (ICallAnalyzer.IsICall(method))
+        if (method is null || !method.HasBody || ICallAnalyzer.IsICall(method))
             return (null, null);
 
         var injectedParams = ICallAnalyzer.GetInjectedICallParams(method);

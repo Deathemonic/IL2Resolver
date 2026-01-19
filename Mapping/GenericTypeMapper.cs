@@ -20,42 +20,39 @@ public static class GenericTypeMapper
             baseName.StartsWith("IDictionary"))
             return "*mut c_void";
 
-        if (baseName == "List" && genericSig.GenericArguments.Count == 1)
+        switch (baseName)
         {
-            var innerType = RustTypeMapper.Map(genericSig.GenericArguments[0]);
-            if (innerType.StartsWith("Option<") && innerType.EndsWith(">"))
-                innerType = innerType[7..^1];
-            return $"List<{innerType}>";
-        }
-
-        if (baseName == "Dictionary" && genericSig.GenericArguments.Count == 2)
-        {
-            var keyType = RustTypeMapper.Map(genericSig.GenericArguments[0]);
-            var valType = RustTypeMapper.Map(genericSig.GenericArguments[1]);
-            if (keyType.StartsWith("Option<") && keyType.EndsWith(">"))
-                keyType = keyType[7..^1];
-            if (valType.StartsWith("Option<") && valType.EndsWith(">"))
-                valType = valType[7..^1];
-            return $"Dictionary<{keyType}, {valType}>";
-        }
-
-        if (baseName == "ValueTuple")
-        {
-            var argCount = genericSig.GenericArguments.Count;
-            if (argCount >= 2 && argCount <= 4)
+            case "List" when genericSig.GenericArguments.Count == 1:
             {
+                var innerType = RustTypeMapper.Map(genericSig.GenericArguments[0]);
+                if (innerType.StartsWith("Option<") && innerType.EndsWith(">"))
+                    innerType = innerType[7..^1];
+                return $"List<{innerType}>";
+            }
+            case "Dictionary" when genericSig.GenericArguments.Count == 2:
+            {
+                var keyType = RustTypeMapper.Map(genericSig.GenericArguments[0]);
+                var valType = RustTypeMapper.Map(genericSig.GenericArguments[1]);
+                if (keyType.StartsWith("Option<") && keyType.EndsWith(">"))
+                    keyType = keyType[7..^1];
+                if (valType.StartsWith("Option<") && valType.EndsWith(">"))
+                    valType = valType[7..^1];
+                return $"Dictionary<{keyType}, {valType}>";
+            }
+            case "ValueTuple":
+            {
+                var argCount = genericSig.GenericArguments.Count;
+                if (argCount < 2 || argCount > 4) return "*mut c_void";
                 var args = genericSig.GenericArguments
                     .Select(a => RustTypeMapper.Map(a))
                     .ToArray();
                 return $"ValueTuple{argCount}<{string.Join(", ", args)}>";
             }
-            return "*mut c_void";
-        }
-
-        if (baseName == "Nullable" && genericSig.GenericArguments.Count == 1)
-        {
-            var innerType = RustTypeMapper.Map(genericSig.GenericArguments[0]);
-            return $"Nullable<{innerType}>";
+            case "Nullable" when genericSig.GenericArguments.Count == 1:
+            {
+                var innerType = RustTypeMapper.Map(genericSig.GenericArguments[0]);
+                return $"Nullable<{innerType}>";
+            }
         }
 
         if (fullName.StartsWith("System.Action") || fullName.StartsWith("System.Func"))

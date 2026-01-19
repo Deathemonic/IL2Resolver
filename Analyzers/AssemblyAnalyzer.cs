@@ -48,13 +48,12 @@ public static class AssemblyAnalyzer
         var types = TypeFilter.GetPublicTypes(module);
         var filtered = TypeFilter.Filter(types, context.NamespaceFilter, context.TypeFilter);
 
-        if (context.IncludeDependencies && context.TypeFilter is { Length: > 0 })
+        if (context is { IncludeDependencies: true, TypeFilter.Length: > 0 })
             filtered = TypeFilter.CollectDependencies(filtered, types);
 
         Log.Info($"[{dllName}] Found {filtered.Count} types to process");
 
         foreach (var typeDef in filtered)
-        {
             try
             {
                 if (typeDef.IsEnum)
@@ -73,7 +72,6 @@ public static class AssemblyAnalyzer
                 if (!context.SuppressWarnings)
                     Log.Warning($"Failed to analyze {typeDef.FullName}: {ex.Message}");
             }
-        }
 
         Log.Info($"[{dllName}] Analyzed {schema.Classes.Count} classes and {schema.Enums.Count} enums");
         return schema;

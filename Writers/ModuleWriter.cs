@@ -51,11 +51,9 @@ public static class ModuleWriter
             EnumWriter.WriteNested(sb, nestedEnum);
         }
 
-        if (cls.Properties.Count > 0 || cls.Methods.Count > 0)
-        {
-            sb.AppendLine();
-            ImplWriter.Write(sb, cls, writerContext);
-        }
+        if (cls.Properties.Count <= 0 && cls.Methods.Count <= 0) return sb.ToString();
+        sb.AppendLine();
+        ImplWriter.Write(sb, cls, writerContext);
 
         return sb.ToString();
     }

@@ -12,12 +12,14 @@ public static class MethodAnalyzer
         var (requiresTodo, todoReason) = TodoChecker.Check(methodDef.ReturnType);
 
         var isICall = ICallAnalyzer.IsICall(methodDef) || ICallAnalyzer.IsExternMethod(methodDef);
-        var (wrappedICallName, wrappedICallArgs) = !isICall ? ICallAnalyzer.GetWrappedICallInfo(methodDef) : (null, null);
+        var (wrappedICallName, wrappedICallArgs) =
+            !isICall ? ICallAnalyzer.GetWrappedICallInfo(methodDef) : (null, null);
         var injectedICallParams = !isICall ? ICallAnalyzer.GetInjectedICallParams(methodDef) : null;
-        var staticDelegate = !isICall && wrappedICallName is null ? ICallAnalyzer.GetStaticDelegateInfo(methodDef) : null;
+        var staticDelegate =
+            !isICall && wrappedICallName is null ? ICallAnalyzer.GetStaticDelegateInfo(methodDef) : null;
 
         var methodName = overrideName ?? methodDef.Name.String;
-        
+
         if (methodName.EndsWith("_Injected"))
             methodName = methodName[..^9];
 
@@ -56,11 +58,13 @@ public static class MethodAnalyzer
             il2CppMethod.Parameters.Add(new Il2CppParameter
             {
                 Name = param.Name,
-                Type = RustTypeMapper.Map(param.Type, isParameter: true, isOut: isOut),
+                Type = RustTypeMapper.Map(param.Type, true, isOut),
                 CSharpType = GetCSharpTypeName(param.Type),
                 IsOut = isOut,
                 IsRef = isRef,
-                DefaultValue = param.ParamDef?.HasDefault == true ? GetDefaultValueString(param.ParamDef.Constant?.Value) : null
+                DefaultValue = param.ParamDef?.HasDefault == true
+                    ? GetDefaultValueString(param.ParamDef.Constant?.Value)
+                    : null
             });
         }
 
@@ -79,11 +83,13 @@ public static class MethodAnalyzer
             ctor.Parameters.Add(new Il2CppParameter
             {
                 Name = param.Name,
-                Type = RustTypeMapper.Map(param.Type, isParameter: true, isOut: isOut),
+                Type = RustTypeMapper.Map(param.Type, true, isOut),
                 CSharpType = GetCSharpTypeName(param.Type),
                 IsOut = isOut,
                 IsRef = isRef,
-                DefaultValue = param.ParamDef?.HasDefault == true ? GetDefaultValueString(param.ParamDef.Constant?.Value) : null
+                DefaultValue = param.ParamDef?.HasDefault == true
+                    ? GetDefaultValueString(param.ParamDef.Constant?.Value)
+                    : null
             });
         }
 
@@ -101,19 +107,21 @@ public static class MethodAnalyzer
         if (typeSig.IsSZArray && typeSig is ArraySigBase arraySig)
             return GetCSharpTypeName(arraySig.Next) + "[]";
 
-        if (typeSig is PtrSig ptrSig)
-            return GetCSharpTypeName(ptrSig.Next) + "*";
-
-        if (typeSig is GenericInstSig genericSig)
+        switch (typeSig)
         {
-            var baseName = genericSig.GenericType?.TypeName ?? "";
-            var backtickIdx = baseName.IndexOf('`');
-            if (backtickIdx > 0) baseName = baseName[..backtickIdx];
-            var args = string.Join(",", genericSig.GenericArguments.Select(GetCSharpTypeName));
-            return $"{baseName}<{args}>";
+            case PtrSig ptrSig:
+                return GetCSharpTypeName(ptrSig.Next) + "*";
+            case GenericInstSig genericSig:
+            {
+                var baseName = genericSig.GenericType?.TypeName ?? "";
+                var backtickIdx = baseName.IndexOf('`');
+                if (backtickIdx > 0) baseName = baseName[..backtickIdx];
+                var args = string.Join(",", genericSig.GenericArguments.Select(GetCSharpTypeName));
+                return $"{baseName}<{args}>";
+            }
+            default:
+                return GetSimpleTypeName(typeSig);
         }
-
-        return GetSimpleTypeName(typeSig);
     }
 
     private static string GetGenericBaseName(ITypeDefOrRef? typeRef)
@@ -146,14 +154,15 @@ public static class MethodAnalyzer
         return backtick > 0 ? typeName[..backtick] : typeName;
     }
 
-    private static string? GetDefaultValueString(object? value) => value switch
-    {
-        null => "None",
-        bool b => b ? "true" : "false",
-        string s => $"\"{s}\"",
-        char c => $"'{c}'",
-        float f => $"{f}_f32",
-        double d => $"{d}_f64",
-        _ => value.ToString()
-    };
+    private static string? GetDefaultValueString(object? value) =>
+        value switch
+        {
+            null => "None",
+            bool b => b ? "true" : "false",
+            string s => $"\"{s}\"",
+            char c => $"'{c}'",
+            float f => $"{f}_f32",
+            double d => $"{d}_f64",
+            _ => value.ToString()
+        };
 }

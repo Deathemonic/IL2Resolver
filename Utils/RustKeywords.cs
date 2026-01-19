@@ -56,7 +56,7 @@ public static class RustKeywords
         ["unsized"] = "unsized_ref",
         ["virtual"] = "virtual_ref",
         ["yield"] = "yield_value",
-        ["try"] = "try_result",
+        ["try"] = "try_result"
     }.ToFrozenDictionary();
 
     public static string Escape(string name) => Renames.GetValueOrDefault(name, name);

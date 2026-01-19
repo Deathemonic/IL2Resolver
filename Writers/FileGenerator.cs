@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using CaseConverter;
 using IL2Resolver.Context;
 using IL2Resolver.Schema;
@@ -23,10 +24,9 @@ public static class FileGenerator
         Log.Info("Generation complete");
     }
 
-    private static void GenerateClassFiles(Il2CppSchema schema, string outputPath, System.Collections.Frozen.FrozenSet<string> validTypeNames)
+    private static void GenerateClassFiles(Il2CppSchema schema, string outputPath, FrozenSet<string> validTypeNames)
     {
         foreach (var cls in schema.Classes)
-        {
             try
             {
                 var fileName = cls.Name.ToSnakeCase();
@@ -39,13 +39,11 @@ public static class FileGenerator
             {
                 Log.Warning($"Failed to generate files for {cls.Namespace}.{cls.Name}: {ex.Message}");
             }
-        }
     }
 
     private static void GenerateEnumFiles(Il2CppSchema schema, string outputPath)
     {
         foreach (var enumDef in schema.Enums.Where(e => !e.IsNested))
-        {
             try
             {
                 var fileName = enumDef.Name.ToSnakeCase();
@@ -58,7 +56,6 @@ public static class FileGenerator
             {
                 Log.Warning($"Failed to generate file for enum {enumDef.Namespace}.{enumDef.Name}: {ex.Message}");
             }
-        }
     }
 
     private static void GenerateModFile(Il2CppSchema schema, string outputPath)

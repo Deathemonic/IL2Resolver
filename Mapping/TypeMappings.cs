@@ -20,7 +20,7 @@ public static class TypeMappings
         ["System.Double"] = "f64",
         ["System.Char"] = "u16",
         ["System.IntPtr"] = "isize",
-        ["System.UIntPtr"] = "usize",
+        ["System.UIntPtr"] = "usize"
     }.ToFrozenDictionary();
 
     public static readonly FrozenDictionary<string, string> UnityMath = new Dictionary<string, string>
@@ -29,7 +29,7 @@ public static class TypeMappings
         ["UnityEngine.Vector3"] = "Vector3",
         ["UnityEngine.Vector4"] = "Vector4",
         ["UnityEngine.Quaternion"] = "Quaternion",
-        ["UnityEngine.Matrix4x4"] = "Matrix4x4",
+        ["UnityEngine.Matrix4x4"] = "Matrix4x4"
     }.ToFrozenDictionary();
 
     public static readonly FrozenDictionary<string, string> SystemTypes = new Dictionary<string, string>
@@ -38,7 +38,7 @@ public static class TypeMappings
         ["System.Object"] = "SystemObject",
         ["System.Type"] = "SystemType",
         ["System.Array"] = "SystemArray",
-        ["System.IO.Stream"] = "Stream",
+        ["System.IO.Stream"] = "Stream"
     }.ToFrozenDictionary();
 
     public static readonly FrozenSet<string> SystemInterfaces = new HashSet<string>
@@ -54,7 +54,7 @@ public static class TypeMappings
         "IFormatProvider",
         "IServiceProvider",
         "IConvertible",
-        "AsyncCallback",
+        "AsyncCallback"
     }.ToFrozenSet();
 
     public static readonly FrozenDictionary<string, string> EnumUnderlyingTypes = new Dictionary<string, string>
@@ -82,9 +82,8 @@ public static class TypeMappings
         ["i8"] = "i8",
         ["uint8_t"] = "u8",
         ["byte"] = "u8",
-        ["u8"] = "u8",
+        ["u8"] = "u8"
     }.ToFrozenDictionary();
 
-    public static string GetEnumUnderlyingType(string cppType) =>
-        EnumUnderlyingTypes.GetValueOrDefault(cppType, "i32");
+    public static string GetEnumUnderlyingType(string cppType) => EnumUnderlyingTypes.GetValueOrDefault(cppType, "i32");
 }

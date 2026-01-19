@@ -1,5 +1,6 @@
 using dnlib.DotNet;
 using IL2Resolver.Mapping;
+using ZLinq;
 
 namespace IL2Resolver.Rules;
 
@@ -32,13 +33,13 @@ public static class TypeFilter
         if (t.IsInterface)
             return false;
 
-        if (name.StartsWith("<") || name.Contains("__"))
+        if (name.StartsWith('<') || name.Contains("__"))
             return false;
 
         if (name.Contains("e__FixedBuffer") || name.Contains("StaticArrayInit"))
             return false;
 
-        if (name.EndsWith("Extensions") && t.IsAbstract && t.IsSealed)
+        if (name.EndsWith("Extensions") && t is { IsAbstract: true, IsSealed: true })
             return false;
 
         if (string.IsNullOrEmpty(ns) && !t.IsNested)
@@ -51,12 +52,9 @@ public static class TypeFilter
         if (TypeMappings.UnityMath.ContainsKey(fullName))
             return false;
 
-        if (t.IsValueType && !t.IsEnum && t.Fields.Count(f => !f.IsStatic) == 0 && 
-            t.Methods.Count(m => m.IsPublic && !m.IsConstructor && !m.IsGetter && !m.IsSetter) == 0 &&
-            t.Properties.Count == 0)
-            return false;
-
-        return true;
+        return !t.IsValueType || t.IsEnum || !t.Fields.All(f => f.IsStatic) ||
+               t.Methods.Any(m => m.IsPublic && m is { IsConstructor: false, IsGetter: false, IsSetter: false }) ||
+               t.Properties.Count != 0;
     }
 
     public static List<TypeDef> Filter(
@@ -77,12 +75,10 @@ public static class TypeFilter
         return [.. result];
     }
 
-    private static IEnumerable<TypeDef> DeduplicateByName(IEnumerable<TypeDef> types)
-    {
-        return types
+    private static IEnumerable<TypeDef> DeduplicateByName(IEnumerable<TypeDef> types) =>
+        types
             .GroupBy(t => t.Name.String)
             .Select(g => g.OrderBy(t => GetNamespaceDepth(t.Namespace?.String)).First());
-    }
 
     private static int GetNamespaceDepth(string? ns)
     {
@@ -124,10 +120,8 @@ public static class TypeFilter
                 continue;
 
             foreach (var refTypeName in GetReferencedTypeNames(typeDef))
-            {
                 if (typesByFullName.TryGetValue(refTypeName, out var refType) && result.Add(refType))
                     toProcess.Enqueue(refType);
-            }
         }
 
         return [.. result];
@@ -139,16 +133,13 @@ public static class TypeFilter
             yield return typeDef.BaseType.FullName;
 
         foreach (var field in typeDef.Fields.Where(f => f.IsPublic || (typeDef.IsValueType && !f.IsStatic)))
-        {
-            foreach (var name in GetTypeNames(field.FieldType))
-                yield return name;
-        }
+        foreach (var name in GetTypeNames(field.FieldType))
+            yield return name;
 
-        foreach (var prop in typeDef.Properties.Where(p => (p.GetMethod?.IsPublic ?? false) || (p.SetMethod?.IsPublic ?? false)))
-        {
-            foreach (var name in GetTypeNames(prop.PropertySig?.RetType))
-                yield return name;
-        }
+        foreach (var prop in typeDef.Properties.Where(p =>
+                     (p.GetMethod?.IsPublic ?? false) || (p.SetMethod?.IsPublic ?? false)))
+        foreach (var name in GetTypeNames(prop.PropertySig?.RetType))
+            yield return name;
 
         foreach (var method in typeDef.Methods.Where(m => !m.IsGetter && !m.IsSetter))
         {
@@ -160,10 +151,8 @@ public static class TypeFilter
                 yield return name;
 
             foreach (var param in method.Parameters.Where(p => p.IsNormalMethodParameter))
-            {
-                foreach (var name in GetTypeNames(param.Type))
-                    yield return name;
-            }
+            foreach (var name in GetTypeNames(param.Type))
+                yield return name;
         }
     }
 
@@ -174,17 +163,13 @@ public static class TypeFilter
              (method.Attributes & MethodAttributes.PinvokeImpl) != 0))
             return true;
 
-        foreach (var attr in method.CustomAttributes)
-        {
-            if (attr.TypeFullName == "System.Runtime.CompilerServices.MethodImplAttribute" &&
-                attr.ConstructorArguments.Count > 0)
-            {
-                var arg = attr.ConstructorArguments[0];
-                if ((arg.Value is int intValue && intValue == 4096) ||
-                    (arg.Value is short shortValue && shortValue == 4096))
-                    return true;
-            }
-        }
+        foreach (var arg in method.CustomAttributes
+                     .AsValueEnumerable()
+                     .Where(attr => attr.TypeFullName == "System.Runtime.CompilerServices.MethodImplAttribute"
+                                    && attr.ConstructorArguments.Count > 0)
+                     .Select(attr => attr.ConstructorArguments[0]))
+            if (arg.Value is 4096 or short and 4096)
+                return true;
 
         return false;
     }
@@ -200,8 +185,8 @@ public static class TypeFilter
                 if (genericSig.GenericType is not null)
                     yield return genericSig.GenericType.FullName;
                 foreach (var arg in genericSig.GenericArguments)
-                    foreach (var name in GetTypeNames(arg))
-                        yield return name;
+                foreach (var name in GetTypeNames(arg))
+                    yield return name;
                 break;
 
             case ArraySigBase arraySig:

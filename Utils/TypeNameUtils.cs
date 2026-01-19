@@ -23,8 +23,7 @@ public static class TypeNameUtils
         return backtickIndex > 0 ? name[..backtickIndex] : name;
     }
 
-    public static string GetFullName(string ns, string name) =>
-        string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}";
+    public static string GetFullName(string ns, string name) => string.IsNullOrEmpty(ns) ? name : $"{ns}.{name}";
 
     public static string ExtractBaseName(string rustType)
     {
@@ -78,22 +77,18 @@ public static class TypeNameUtils
         if (rustType.StartsWith(prefix))
             return rustType[prefix.Length..];
 
-        if (rustType.StartsWith("Option<") && rustType.EndsWith(">"))
-        {
-            var inner = rustType[7..^1];
-            if (inner.StartsWith(prefix))
-                return $"Option<{inner[prefix.Length..]}>";
-        }
-
-        return rustType;
+        if (!rustType.StartsWith("Option<") || !rustType.EndsWith(">")) return rustType;
+        var inner = rustType[7..^1];
+        return inner.StartsWith(prefix) ? $"Option<{inner[prefix.Length..]}>" : rustType;
     }
 
-    public static string SanitizeIdentifier(string name) => name
-        .Replace('<', '_')
-        .Replace('>', '_')
-        .Replace('`', '_')
-        .Replace('.', '_')
-        .Replace('-', '_')
-        .Replace('/', '_')
-        .Replace('+', '_');
+    public static string SanitizeIdentifier(string name) =>
+        name
+            .Replace('<', '_')
+            .Replace('>', '_')
+            .Replace('`', '_')
+            .Replace('.', '_')
+            .Replace('-', '_')
+            .Replace('/', '_')
+            .Replace('+', '_');
 }

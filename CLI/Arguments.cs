@@ -9,8 +9,6 @@ public static class Arguments
         string[]? type = null,
         bool depends = false,
         bool verbose = false,
-        bool suppressWarnings = false)
-    {
+        bool suppressWarnings = false) =>
         Parser.Execute(dll, output, @namespace, type, depends, verbose, suppressWarnings);
-    }
 }

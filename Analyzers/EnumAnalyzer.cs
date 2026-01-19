@@ -21,13 +21,11 @@ public static class EnumAnalyzer
         };
 
         foreach (var field in typeDef.Fields.Where(f => f.HasConstant))
-        {
             il2CppEnum.Values.Add(new Il2CppEnumValue
             {
                 Name = field.Name.String,
                 Value = Convert.ToInt64(field.Constant.Value)
             });
-        }
 
         return il2CppEnum;
     }
@@ -35,10 +33,9 @@ public static class EnumAnalyzer
     private static string GetUnderlyingRustType(TypeDef typeDef)
     {
         var underlyingField = typeDef.Fields.FirstOrDefault(f => f.Name.String == "value__");
-        if (underlyingField is null)
-            return "i32";
-
-        return TypeMappings.Primitives.GetValueOrDefault(underlyingField.FieldType.FullName, "i32");
+        return underlyingField is null
+            ? "i32"
+            : TypeMappings.Primitives.GetValueOrDefault(underlyingField.FieldType.FullName, "i32");
     }
 
     private static string GetEffectiveNamespace(TypeDef typeDef)

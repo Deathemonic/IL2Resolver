@@ -53,16 +53,17 @@ public static class Log
         _isInitialized = true;
     }
 
-    private static string GetColoredLogLevel(LogLevel logLevel) => logLevel switch
-    {
-        LogLevel.Trace => Chalk.Magenta + "[TRC]",
-        LogLevel.Debug => Chalk.Cyan + "[DBG]",
-        LogLevel.Information => Chalk.Blue + "[INF]",
-        LogLevel.Warning => Chalk.Yellow + "[WRN]",
-        LogLevel.Error => Chalk.Red + "[ERR]",
-        LogLevel.Critical => Chalk.BgRed.White + "[CRT]",
-        _ => Chalk.White + "[???]"
-    };
+    private static string GetColoredLogLevel(LogLevel logLevel) =>
+        logLevel switch
+        {
+            LogLevel.Trace => Chalk.Magenta + "[TRC]",
+            LogLevel.Debug => Chalk.Cyan + "[DBG]",
+            LogLevel.Information => Chalk.Blue + "[INF]",
+            LogLevel.Warning => Chalk.Yellow + "[WRN]",
+            LogLevel.Error => Chalk.Red + "[ERR]",
+            LogLevel.Critical => Chalk.BgRed.White + "[CRT]",
+            _ => Chalk.White + "[???]"
+        };
 
     public static void Info(string message)
     {

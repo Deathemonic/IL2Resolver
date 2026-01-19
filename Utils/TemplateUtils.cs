@@ -9,7 +9,6 @@ public static class TemplateUtils
         var start = 0;
 
         for (var i = 0; i < args.Length; i++)
-        {
             switch (args[i])
             {
                 case '<':
@@ -23,7 +22,6 @@ public static class TemplateUtils
                     start = i + 1;
                     break;
             }
-        }
 
         if (start < args.Length)
             result.Add(args[start..].Trim());

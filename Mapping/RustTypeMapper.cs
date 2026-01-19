@@ -59,11 +59,12 @@ public static class RustTypeMapper
 
         var typeDef = TypeNameUtils.ResolveTypeDef(typeSig);
 
-        if (typeDef is { IsInterface: true })
-            return "*mut c_void";
-
-        if (typeDef is null)
-            return "*mut c_void";
+        switch (typeDef)
+        {
+            case { IsInterface: true }:
+            case null:
+                return "*mut c_void";
+        }
 
         if (!IsAccessible(typeDef))
             return "*mut c_void";
@@ -99,17 +100,13 @@ public static class RustTypeMapper
             name = name[..backtickIndex];
 
         var typeDef = TypeNameUtils.ResolveTypeDef(typeSig);
-        if (typeDef is { IsNested: true, DeclaringType: not null } && typeDef.IsEnum)
-        {
-            var parentName = typeDef.DeclaringType.Name.String;
-            var parentBacktick = parentName.IndexOf('`');
-            if (parentBacktick > 0)
-                parentName = parentName[..parentBacktick];
+        if (typeDef is not { IsNested: true, DeclaringType: not null } || !typeDef.IsEnum) return name;
+        var parentName = typeDef.DeclaringType.Name.String;
+        var parentBacktick = parentName.IndexOf('`');
+        if (parentBacktick > 0)
+            parentName = parentName[..parentBacktick];
 
-            var parentModule = parentName.ToSnakeCase();
-            return $"{parentModule}::{name}";
-        }
-
-        return name;
+        var parentModule = parentName.ToSnakeCase();
+        return $"{parentModule}::{name}";
     }
 }

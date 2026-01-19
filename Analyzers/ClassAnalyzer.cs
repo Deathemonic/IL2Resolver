@@ -18,8 +18,8 @@ public static class ClassAnalyzer
             Namespace = GetEffectiveNamespace(typeDef),
             BaseTypeName = GetBaseTypeName(typeDef),
             BaseTypeModule = TypeTracker.GetTypeModule(typeDef.BaseType, currentAssemblyName),
-            IsValueType = typeDef.IsValueType && !typeDef.IsEnum,
-            IsStatic = typeDef.IsAbstract && typeDef.IsSealed
+            IsValueType = typeDef is { IsValueType: true, IsEnum: false },
+            IsStatic = typeDef is { IsAbstract: true, IsSealed: true }
         };
 
         BuildInheritanceChain(typeDef, il2CppClass, currentAssemblyName);
@@ -65,7 +65,8 @@ public static class ClassAnalyzer
         }
     }
 
-    private static void AnalyzeProperties(TypeDef typeDef, Il2CppClass il2CppClass, string currentAssemblyName, HashSet<string> propertyMethodNames)
+    private static void AnalyzeProperties(TypeDef typeDef, Il2CppClass il2CppClass, string currentAssemblyName,
+        HashSet<string> propertyMethodNames)
     {
         foreach (var property in typeDef.Properties)
         {
@@ -91,7 +92,8 @@ public static class ClassAnalyzer
         }
     }
 
-    private static void AnalyzeMethods(TypeDef typeDef, Il2CppClass il2CppClass, string currentAssemblyName, HashSet<string> propertyMethodNames)
+    private static void AnalyzeMethods(TypeDef typeDef, Il2CppClass il2CppClass, string currentAssemblyName,
+        HashSet<string> propertyMethodNames)
     {
         var wrappedIcalls = new HashSet<string>();
         foreach (var method in typeDef.Methods)
@@ -103,12 +105,10 @@ public static class ClassAnalyzer
             if (isICall)
                 continue;
 
-            if (ICallAnalyzer.IsSimpleWrapper(method))
-            {
-                var targetICall = ICallAnalyzer.FindTargetICall(method);
-                if (targetICall is not null)
-                    wrappedIcalls.Add(targetICall.FullName);
-            }
+            if (!ICallAnalyzer.IsSimpleWrapper(method)) continue;
+            var targetICall = ICallAnalyzer.FindTargetICall(method);
+            if (targetICall is not null)
+                wrappedIcalls.Add(targetICall.FullName);
         }
 
         foreach (var method in typeDef.Methods)
@@ -117,7 +117,7 @@ public static class ClassAnalyzer
                 continue;
             if (method.IsConstructor)
             {
-                if (method.IsPublic && !method.IsStatic && !il2CppClass.IsValueType)
+                if (method is { IsPublic: true, IsStatic: false } && !il2CppClass.IsValueType)
                 {
                     var ctor = MethodAnalyzer.AnalyzeConstructor(method);
                     il2CppClass.Constructors.Add(ctor);
@@ -127,8 +127,10 @@ public static class ClassAnalyzer
                         TypeTracker.TrackExternalType(param.Type, currentAssemblyName, il2CppClass.ExternalTypes);
                     }
                 }
+
                 continue;
             }
+
             if (MethodAnalyzer.IsOperatorMethod(method))
                 continue;
 
@@ -222,9 +224,6 @@ public static class ClassAnalyzer
             {
                 var il2CppField = FieldAnalyzer.Analyze(field);
                 il2CppClass.Fields.Add(il2CppField);
-
-                TypeTracker.TrackReferencedType(field.FieldType, il2CppClass.ReferencedTypes);
-                TypeTracker.TrackExternalType(field.FieldType, currentAssemblyName, il2CppClass.ExternalTypes);
             }
             else
             {
@@ -233,10 +232,10 @@ public static class ClassAnalyzer
 
                 var il2CppField = FieldAnalyzer.Analyze(field);
                 il2CppClass.Fields.Add(il2CppField);
-
-                TypeTracker.TrackReferencedType(field.FieldType, il2CppClass.ReferencedTypes);
-                TypeTracker.TrackExternalType(field.FieldType, currentAssemblyName, il2CppClass.ExternalTypes);
             }
+
+            TypeTracker.TrackReferencedType(field.FieldType, il2CppClass.ReferencedTypes);
+            TypeTracker.TrackExternalType(field.FieldType, currentAssemblyName, il2CppClass.ExternalTypes);
         }
     }
 
@@ -277,7 +276,7 @@ public static class ClassAnalyzer
         if (!string.IsNullOrEmpty(typeDef.Namespace?.String))
             return typeDef.Namespace.String;
 
-        if (typeDef.IsNested && typeDef.DeclaringType is not null)
+        if (typeDef is { IsNested: true, DeclaringType: not null })
             return GetEffectiveNamespace(typeDef.DeclaringType);
 
         return "";

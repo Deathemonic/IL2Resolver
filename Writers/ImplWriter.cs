@@ -69,7 +69,8 @@ public static class ImplWriter
         }
     }
 
-    private static void WritePropertyMethods(StringBuilder sb, Il2CppProperty prop, Il2CppClass cls, Dictionary<string, int> methodNameCounts, string currentModuleName)
+    private static void WritePropertyMethods(StringBuilder sb, Il2CppProperty prop, Il2CppClass cls,
+        Dictionary<string, int> methodNameCounts, string currentModuleName)
     {
         var propName = prop.Name.ToSnakeCase();
         var propType = TypeNameUtils.StripModulePrefix(prop.Type, currentModuleName);
@@ -106,6 +107,7 @@ public static class ImplWriter
                 sb.AppendLine($"    #[unity_method(name = \"get_{ilName}\")]");
                 sb.AppendLine($"    pub fn {getterName}({selfParam}) -> {propType} {{}}");
             }
+
             sb.AppendLine();
         }
 
@@ -137,11 +139,13 @@ public static class ImplWriter
             sb.AppendLine($"    #[unity_method(name = \"set_{ilName}\")]");
             sb.AppendLine($"    pub fn {setterName}({setterSelfParam}value: {setterParamType}) {{}}");
         }
+
         sb.AppendLine();
     }
 
     private static void WriteMethod(StringBuilder sb, Il2CppMethod method, Il2CppClass cls,
-        Dictionary<string, int> methodNameCounts, Dictionary<string, string> csharpNameToRustName, string currentModuleName)
+        Dictionary<string, int> methodNameCounts, Dictionary<string, string> csharpNameToRustName,
+        string currentModuleName)
     {
         if (method.GenericParameters.Count > 0 || method.RequiresTodo || method.Name == "IsValid")
             return;
@@ -154,34 +158,30 @@ public static class ImplWriter
 
         var parameters = BuildParameterList(method.Parameters, !method.IsStatic, currentModuleName);
 
-        if (method is { StaticDelegateMethod: not null, StaticDelegateField: not null, StaticDelegateParams: not null })
+        switch (method)
         {
-            var staticMethodName = method.StaticDelegateMethod.ToSnakeCase();
-            var fieldName = method.StaticDelegateField.ToSnakeCase();
-
-            var argParts = new List<string> { $"&mut self.{fieldName}" };
-            foreach (var param in method.Parameters)
+            case { StaticDelegateMethod: not null, StaticDelegateField: not null, StaticDelegateParams: not null }:
             {
-                var paramName = RustKeywords.Escape(param.Name.ToSnakeCase());
-                argParts.Add(paramName);
+                var staticMethodName = method.StaticDelegateMethod.ToSnakeCase();
+                var fieldName = method.StaticDelegateField.ToSnakeCase();
+
+                var argParts = new List<string> { $"&mut self.{fieldName}" };
+                argParts.AddRange(method.Parameters.Select(param => RustKeywords.Escape(param.Name.ToSnakeCase())));
+
+                var wrapperArgs = string.Join(", ", argParts);
+
+                var mutSelfParams = BuildParameterList(method.Parameters, false, currentModuleName);
+                var selfPart = string.IsNullOrEmpty(mutSelfParams) ? "&mut self" : "&mut self, ";
+
+                var wrapperReturnClause = returnType == "()" ? "" : $" -> {returnType}";
+                sb.AppendLine($"    pub fn {methodName}({selfPart}{mutSelfParams}){wrapperReturnClause} {{");
+                sb.AppendLine($"        Self::{staticMethodName}({wrapperArgs})");
+                sb.AppendLine("    }");
+                sb.AppendLine();
+                return;
             }
-
-            var wrapperArgs = string.Join(", ", argParts);
-
-            var mutSelfParams = BuildParameterList(method.Parameters, false, currentModuleName);
-            var selfPart = string.IsNullOrEmpty(mutSelfParams) ? "&mut self" : "&mut self, ";
-
-            var wrapperReturnClause = returnType == "()" ? "" : $" -> {returnType}";
-            sb.AppendLine($"    pub fn {methodName}({selfPart}{mutSelfParams}){wrapperReturnClause} {{");
-            sb.AppendLine($"        Self::{staticMethodName}({wrapperArgs})");
-            sb.AppendLine("    }");
-            sb.AppendLine();
-            return;
-        }
-
-        if (method is { WrappedICallName: not null, WrappedICallArgs: not null })
-        {
-            if (method.WrappedICallArgs is ["__injected__"])
+            case { WrappedICallName: not null, WrappedICallArgs: not null }
+                when method.WrappedICallArgs is ["__injected__"]:
             {
                 var icallName = BuildInjectedICallName(cls, method.WrappedICallName, method.InjectedICallParams);
                 sb.AppendLine($"    #[unity_icall(\"{icallName}\")]");
@@ -191,20 +191,22 @@ public static class ImplWriter
                 sb.AppendLine();
                 return;
             }
+            case { WrappedICallName: not null, WrappedICallArgs: not null }:
+            {
+                if (!csharpNameToRustName.TryGetValue(method.WrappedICallName, out var internalMethodName))
+                    internalMethodName = method.WrappedICallName.ToSnakeCase();
 
-            if (!csharpNameToRustName.TryGetValue(method.WrappedICallName, out var internalMethodName))
-                internalMethodName = method.WrappedICallName.ToSnakeCase();
+                var wrapperArgs = string.Join(", ", method.WrappedICallArgs.Select(a =>
+                    IsLiteralValue(a) ? a : RustKeywords.Escape(a.ToSnakeCase())));
+                var selfPrefix = method.IsStatic ? "Self::" : "self.";
 
-            var wrapperArgs = string.Join(", ", method.WrappedICallArgs.Select(a =>
-                IsLiteralValue(a) ? a : RustKeywords.Escape(a.ToSnakeCase())));
-            var selfPrefix = method.IsStatic ? "Self::" : "self.";
-
-            var wrapperReturnClause = returnType == "()" ? "" : $" -> {returnType}";
-            sb.AppendLine($"    pub fn {methodName}({parameters}){wrapperReturnClause} {{");
-            sb.AppendLine($"        {selfPrefix}{internalMethodName}({wrapperArgs})");
-            sb.AppendLine("    }");
-            sb.AppendLine();
-            return;
+                var wrapperReturnClause = returnType == "()" ? "" : $" -> {returnType}";
+                sb.AppendLine($"    pub fn {methodName}({parameters}){wrapperReturnClause} {{");
+                sb.AppendLine($"        {selfPrefix}{internalMethodName}({wrapperArgs})");
+                sb.AppendLine("    }");
+                sb.AppendLine();
+                return;
+            }
         }
 
         if (method.IsICall)
@@ -226,7 +228,8 @@ public static class ImplWriter
         sb.AppendLine();
     }
 
-    private static string BuildParameterList(List<Il2CppParameter> parameters, bool hasSelf, string? currentModuleName = null)
+    private static string BuildParameterList(List<Il2CppParameter> parameters, bool hasSelf,
+        string? currentModuleName = null)
     {
         var parts = new List<string>();
 
@@ -236,8 +239,8 @@ public static class ImplWriter
         foreach (var param in parameters)
         {
             var paramName = RustKeywords.Escape(param.Name.ToSnakeCase());
-            var paramType = currentModuleName is not null 
-                ? TypeNameUtils.StripModulePrefix(param.Type, currentModuleName) 
+            var paramType = currentModuleName is not null
+                ? TypeNameUtils.StripModulePrefix(param.Type, currentModuleName)
                 : param.Type;
 
             if (param.IsOut || param.IsRef)
@@ -272,10 +275,9 @@ public static class ImplWriter
         var ns = cls.Namespace;
         var fullClassName = string.IsNullOrEmpty(ns) ? cls.Name : $"{ns}.{cls.Name}";
 
-        if (paramTypes is null or { Count: 0 })
-            return $"{fullClassName}::{methodName}";
-
-        return $"{fullClassName}::{methodName}({string.Join(",", paramTypes)})";
+        return paramTypes is null or { Count: 0 }
+            ? $"{fullClassName}::{methodName}"
+            : $"{fullClassName}::{methodName}({string.Join(",", paramTypes)})";
     }
 
     private static string BuildICallNameForProperty(Il2CppClass cls, string methodName, string csharpType)

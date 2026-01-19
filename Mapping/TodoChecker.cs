@@ -7,50 +7,50 @@ public static class TodoChecker
 {
     public static (bool RequiresTodo, string? Reason) Check(TypeSig? typeSig)
     {
-        if (typeSig is null)
-            return (false, null);
-
-        if (typeSig is PtrSig ptrSig)
-            return Check(ptrSig.Next);
-
-        if (typeSig is ByRefSig byRefSig)
-            return Check(byRefSig.Next);
+        switch (typeSig)
+        {
+            case null:
+                return (false, null);
+            case PtrSig ptrSig:
+                return Check(ptrSig.Next);
+            case ByRefSig byRefSig:
+                return Check(byRefSig.Next);
+        }
 
         if (typeSig.IsSZArray && typeSig is ArraySigBase arraySig)
             return Check(arraySig.Next);
 
-        if (typeSig is GenericInstSig genericSig)
+        switch (typeSig)
         {
-            var elementTypeName = genericSig.GenericType?.TypeName ?? "";
-
-            if (elementTypeName == "Dictionary`2")
-                return (true, "Dictionary<K,V> types require manual implementation");
-
-            if (elementTypeName.StartsWith("IEnumerable") ||
-                elementTypeName.StartsWith("ICollection") ||
-                elementTypeName.StartsWith("IList"))
-                return (true, "Collection interface types require manual implementation");
-
-            if (elementTypeName is "NativeArray`1" or "NativeSlice`1" or "ReadOnlySpan`1" or "Span`1")
-                return (true, $"{elementTypeName} not yet supported");
-
-            foreach (var arg in genericSig.GenericArguments)
+            case GenericInstSig genericSig:
             {
-                var (argRequiresTodo, argReason) = Check(arg);
-                if (argRequiresTodo)
-                    return (true, argReason);
-            }
+                var elementTypeName = genericSig.GenericType?.TypeName ?? "";
 
-            return (false, null);
+                if (elementTypeName == "Dictionary`2")
+                    return (true, "Dictionary<K,V> types require manual implementation");
+
+                if (elementTypeName.StartsWith("IEnumerable") ||
+                    elementTypeName.StartsWith("ICollection") ||
+                    elementTypeName.StartsWith("IList"))
+                    return (true, "Collection interface types require manual implementation");
+
+                if (elementTypeName is "NativeArray`1" or "NativeSlice`1" or "ReadOnlySpan`1" or "Span`1")
+                    return (true, $"{elementTypeName} not yet supported");
+
+                foreach (var arg in genericSig.GenericArguments)
+                {
+                    var (argRequiresTodo, argReason) = Check(arg);
+                    if (argRequiresTodo)
+                        return (true, argReason);
+                }
+
+                return (false, null);
+            }
+            case GenericVar or GenericMVar:
+                return (false, null);
         }
 
-        if (typeSig is GenericVar or GenericMVar)
-            return (false, null);
-
-        if (IsPrimitiveOrSystemType(typeSig))
-            return (false, null);
-
-        if (TypeMappings.UnityMath.ContainsKey(typeSig.FullName))
+        if (IsPrimitiveOrSystemType(typeSig) || TypeMappings.UnityMath.ContainsKey(typeSig.FullName))
             return (false, null);
 
         var typeDef = TypeNameUtils.ResolveTypeDef(typeSig);
@@ -60,10 +60,7 @@ public static class TodoChecker
         if (typeDef.IsInterface)
             return (false, null);
 
-        if (!IsAccessible(typeDef))
-            return (true, $"{typeSig.TypeName} is not accessible");
-
-        return (false, null);
+        return !IsAccessible(typeDef) ? (true, $"{typeSig.TypeName} is not accessible") : (false, null);
     }
 
     private static bool IsPrimitiveOrSystemType(TypeSig typeSig)
