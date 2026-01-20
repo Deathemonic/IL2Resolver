@@ -1,0 +1,52 @@
+#![allow(non_camel_case_types)]
+#![allow(dead_code)]
+
+pub mod articulation_body;
+pub mod articulation_dof_lock;
+pub mod articulation_drive;
+pub mod articulation_jacobian;
+pub mod articulation_joint_type;
+pub mod articulation_reduced_space;
+pub mod box_collider;
+pub mod capsule_collider;
+pub mod character_controller;
+pub mod collider;
+pub mod collision_detection_mode;
+pub mod collision_flags;
+pub mod force_mode;
+pub mod modifiable_contact_pair;
+pub mod modifiable_mass_properties;
+pub mod physic_material;
+pub mod physic_material_combine;
+pub mod physics;
+pub mod physics_scene;
+pub mod query_trigger_interaction;
+pub mod raycast_hit;
+pub mod rigidbody;
+pub mod rigidbody_constraints;
+pub mod rigidbody_interpolation;
+
+pub use articulation_body::ArticulationBody;
+pub use articulation_drive::ArticulationDrive;
+pub use articulation_jacobian::ArticulationJacobian;
+pub use articulation_reduced_space::ArticulationReducedSpace;
+pub use box_collider::BoxCollider;
+pub use capsule_collider::CapsuleCollider;
+pub use character_controller::CharacterController;
+pub use collider::Collider;
+pub use modifiable_contact_pair::ModifiableContactPair;
+pub use modifiable_mass_properties::ModifiableMassProperties;
+pub use physic_material::PhysicMaterial;
+pub use physics::Physics;
+pub use physics_scene::PhysicsScene;
+pub use raycast_hit::RaycastHit;
+pub use rigidbody::Rigidbody;
+pub use articulation_dof_lock::ArticulationDofLock;
+pub use articulation_joint_type::ArticulationJointType;
+pub use collision_detection_mode::CollisionDetectionMode;
+pub use collision_flags::CollisionFlags;
+pub use force_mode::ForceMode;
+pub use physic_material_combine::PhysicMaterialCombine;
+pub use query_trigger_interaction::QueryTriggerInteraction;
+pub use rigidbody_constraints::RigidbodyConstraints;
+pub use rigidbody_interpolation::RigidbodyInterpolation;
