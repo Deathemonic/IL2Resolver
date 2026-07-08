@@ -6,5 +6,7 @@ public readonly record struct WriterContext(
     string CurrentModuleName,
     FrozenSet<string> ValidSchemaTypes,
     FrozenSet<string> ExternalTypeNames,
-    FrozenSet<string> NestedEnumNames
+    FrozenSet<string> NestedEnumNames,
+    IReadOnlySet<string> ValueTypes,
+    IReadOnlySet<string> EnumTypes
 );

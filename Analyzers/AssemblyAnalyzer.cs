@@ -101,10 +101,21 @@ public static class AssemblyAnalyzer
     {
         try
         {
+            var validation = context.ValidationContext;
+            var fullName = string.IsNullOrEmpty(typeDef.Namespace)
+                ? typeDef.Name.String
+                : $"{typeDef.Namespace}.{typeDef.Name.String}";
+
+            if (validation.IsEnabled && !validation.ClassExists(fullName))
+            {
+                Log.Debug($"Skipping {fullName} - not found in runtime dump");
+                return;
+            }
+
             if (typeDef.IsEnum)
                 schema.Enums.Add(EnumAnalyzer.Analyze(typeDef));
             else if (!typeDef.IsInterface && !InheritsFromAttribute(typeDef))
-                schema.Classes.Add(ClassAnalyzer.Analyze(typeDef));
+                schema.Classes.Add(ClassAnalyzer.Analyze(typeDef, validation));
         }
         catch (Exception ex)
         {

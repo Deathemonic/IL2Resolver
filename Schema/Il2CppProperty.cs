@@ -15,4 +15,6 @@ public sealed class Il2CppProperty
     public List<string>? GetterInjectedParams { get; init; }
     public string? SetterInjectedICallName { get; init; }
     public List<string>? SetterInjectedParams { get; init; }
+    public WrapperInfo? GetterWrapperInfo { get; init; }
+    public WrapperInfo? SetterWrapperInfo { get; init; }
 }

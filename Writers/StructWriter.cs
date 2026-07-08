@@ -1,6 +1,7 @@
 using System.Text;
 using CaseConverter;
 using IL2Resolver.Context;
+using IL2Resolver.Mapping;
 using IL2Resolver.Rules;
 using IL2Resolver.Schema;
 using IL2Resolver.Utils;

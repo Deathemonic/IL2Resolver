@@ -15,6 +15,8 @@ public sealed class Il2CppMethod
     public List<Il2CppParameter>? StaticDelegateParams { get; init; }
     public bool RequiresTodo { get; init; }
     public string? TodoReason { get; init; }
+    public WrapperInfo? WrapperInfo { get; init; }
+    public bool ExistsInRuntime { get; init; }
     public List<Il2CppParameter> Parameters { get; } = [];
     public List<string> GenericParameters { get; } = [];
 }

@@ -8,7 +8,7 @@ namespace IL2Resolver.Writers;
 
 public static class ModuleWriter
 {
-    public static string GenerateClass(Il2CppClass cls, Il2CppSchema schema, FrozenSet<string> validTypeNames)
+    public static string GenerateClass(Il2CppClass cls, Il2CppSchema schema, FrozenSet<string> validTypeNames, IReadOnlySet<string> valueTypes, IReadOnlySet<string> enumTypes)
     {
         var sb = new StringBuilder();
 
@@ -30,7 +30,9 @@ public static class ModuleWriter
             currentModuleName,
             schemaTypes.ToFrozenSet(),
             externalTypeNames.ToFrozenSet(),
-            nestedEnumNames.ToFrozenSet()
+            nestedEnumNames.ToFrozenSet(),
+            valueTypes,
+            enumTypes
         );
 
         sb.AppendLine("#![allow(non_camel_case_types)]");

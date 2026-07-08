@@ -1,5 +1,6 @@
 using CaseConverter;
 using dnlib.DotNet;
+using IL2Resolver.Context;
 using IL2Resolver.Mapping;
 using IL2Resolver.Schema;
 using IL2Resolver.Utils;
@@ -8,9 +9,12 @@ namespace IL2Resolver.Analyzers;
 
 public static class ClassAnalyzer
 {
-    public static Il2CppClass Analyze(TypeDef typeDef)
+    public static Il2CppClass Analyze(TypeDef typeDef, ValidationContext validation)
     {
         var currentAssemblyName = typeDef.Module.Assembly.Name.String;
+        var classFullName = string.IsNullOrEmpty(typeDef.Namespace)
+            ? typeDef.Name.String
+            : $"{typeDef.Namespace}.{typeDef.Name.String}";
 
         var il2CppClass = new Il2CppClass
         {
@@ -28,8 +32,8 @@ public static class ClassAnalyzer
             il2CppClass.GenericParameters.Add(genericParam.Name.String);
 
         var propertyMethodNames = new HashSet<string>();
-        AnalyzeProperties(typeDef, il2CppClass, currentAssemblyName, propertyMethodNames);
-        AnalyzeMethods(typeDef, il2CppClass, currentAssemblyName, propertyMethodNames);
+        AnalyzeProperties(typeDef, il2CppClass, currentAssemblyName, propertyMethodNames, classFullName, validation);
+        AnalyzeMethods(typeDef, il2CppClass, currentAssemblyName, propertyMethodNames, classFullName, validation);
         AnalyzeNestedEnums(typeDef, il2CppClass);
         AnalyzeFields(typeDef, il2CppClass, currentAssemblyName);
 
@@ -66,11 +70,20 @@ public static class ClassAnalyzer
     }
 
     private static void AnalyzeProperties(TypeDef typeDef, Il2CppClass il2CppClass, string currentAssemblyName,
-        HashSet<string> propertyMethodNames)
+        HashSet<string> propertyMethodNames, string classFullName, ValidationContext validation)
     {
         foreach (var property in typeDef.Properties)
         {
             if (!PropertyAnalyzer.IsPublic(property)) continue;
+
+            var getterName = $"get_{property.Name.String}";
+            var setterName = $"set_{property.Name.String}";
+
+            var getterExists = !validation.IsEnabled || validation.MethodExists(classFullName, getterName);
+            var setterExists = !validation.IsEnabled || validation.MethodExists(classFullName, setterName);
+
+            if (!getterExists && !setterExists)
+                continue;
 
             var il2CppProperty = PropertyAnalyzer.Analyze(property);
             il2CppClass.Properties.Add(il2CppProperty);
@@ -93,7 +106,7 @@ public static class ClassAnalyzer
     }
 
     private static void AnalyzeMethods(TypeDef typeDef, Il2CppClass il2CppClass, string currentAssemblyName,
-        HashSet<string> propertyMethodNames)
+        HashSet<string> propertyMethodNames, string classFullName, ValidationContext validation)
     {
         var wrappedIcalls = new HashSet<string>();
         foreach (var method in typeDef.Methods)
@@ -105,10 +118,13 @@ public static class ClassAnalyzer
             if (isICall)
                 continue;
 
-            if (!ICallAnalyzer.IsSimpleWrapper(method)) continue;
-            var targetICall = ICallAnalyzer.FindTargetICall(method);
-            if (targetICall is not null)
-                wrappedIcalls.Add(targetICall.FullName);
+            var wrapperInfo = ICallAnalyzer.AnalyzeWrapperChain(method);
+            if (wrapperInfo is not null)
+            {
+                var targetICall = ICallAnalyzer.FindTargetICall(method);
+                if (targetICall is not null)
+                    wrappedIcalls.Add(targetICall.FullName);
+            }
         }
 
         foreach (var method in typeDef.Methods)
@@ -119,12 +135,16 @@ public static class ClassAnalyzer
             {
                 if (method is { IsPublic: true, IsStatic: false } && !il2CppClass.IsValueType)
                 {
-                    var ctor = MethodAnalyzer.AnalyzeConstructor(method);
-                    il2CppClass.Constructors.Add(ctor);
-                    foreach (var param in method.Parameters.Where(p => p.IsNormalMethodParameter))
+                    var ctorExists = !validation.IsEnabled || validation.MethodExists(classFullName, ".ctor");
+                    if (ctorExists)
                     {
-                        TypeTracker.TrackReferencedType(param.Type, il2CppClass.ReferencedTypes);
-                        TypeTracker.TrackExternalType(param.Type, currentAssemblyName, il2CppClass.ExternalTypes);
+                        var ctor = MethodAnalyzer.AnalyzeConstructor(method);
+                        il2CppClass.Constructors.Add(ctor);
+                        foreach (var param in method.Parameters.Where(p => p.IsNormalMethodParameter))
+                        {
+                            TypeTracker.TrackReferencedType(param.Type, il2CppClass.ReferencedTypes);
+                            TypeTracker.TrackExternalType(param.Type, currentAssemblyName, il2CppClass.ExternalTypes);
+                        }
                     }
                 }
 
@@ -142,35 +162,21 @@ public static class ClassAnalyzer
             if (isICall && wrappedIcalls.Contains(method.FullName))
                 continue;
 
-            MethodDef methodToAnalyze;
-            string? overrideName = null;
+            if (validation.IsEnabled)
+            {
+                var paramTypes = method.Parameters
+                    .Where(p => p.IsNormalMethodParameter)
+                    .Select(p => p.Type.FullName)
+                    .ToList();
 
-            if (method.IsPublic && !isICall)
-            {
-                var targetICall = ICallAnalyzer.FindTargetICall(method);
-                if (targetICall is not null)
-                {
-                    if (ICallAnalyzer.IsSimpleWrapper(method))
-                    {
-                        methodToAnalyze = targetICall;
-                        overrideName = method.Name.String;
-                    }
-                    else
-                    {
-                        continue;
-                    }
-                }
-                else
-                {
-                    methodToAnalyze = method;
-                }
-            }
-            else
-            {
-                methodToAnalyze = method;
+                if (!validation.MethodExistsWithSignature(classFullName, method.Name.String, paramTypes))
+                    continue;
             }
 
-            var il2CppMethod = MethodAnalyzer.Analyze(methodToAnalyze, overrideName);
+            var il2CppMethod = MethodAnalyzer.Analyze(method, validation, classFullName);
+
+            if (!isICall && il2CppMethod.WrapperInfo is null && !il2CppMethod.ExistsInRuntime)
+                continue;
 
             var isPropertyGetter = propertyMethodNames.Contains(il2CppMethod.Name) &&
                                    il2CppMethod.Name.StartsWith("Get") &&
@@ -184,7 +190,7 @@ public static class ClassAnalyzer
                 continue;
 
             il2CppClass.Methods.Add(il2CppMethod);
-            TrackMethodTypes(methodToAnalyze, il2CppClass, currentAssemblyName);
+            TrackMethodTypes(method, il2CppClass, currentAssemblyName);
         }
     }
 

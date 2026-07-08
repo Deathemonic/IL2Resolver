@@ -64,6 +64,26 @@ public static class ImportWriter
                         paramType = paramType[5..].Trim();
                 usedRustTypes.Add(paramType);
             }
+
+            if (method.WrapperInfo is not null)
+            {
+                foreach (var csharpParam in method.WrapperInfo.ICallCSharpParams)
+                {
+                    var baseType = csharpParam.TrimEnd('&');
+                    if (baseType.EndsWith("[]"))
+                    {
+                        var elemType = baseType[..^2];
+                        usedRustTypes.Add($"Array<{Mapping.TypeMappings.GetRustPrimitive(elemType)}>");
+                    }
+                    else
+                    {
+                        usedRustTypes.Add(Mapping.TypeMappings.GetRustPrimitive(baseType));
+                    }
+                }
+
+                if (method.WrapperInfo.OutReturnRustType is not null)
+                    usedRustTypes.Add(method.WrapperInfo.OutReturnRustType);
+            }
         }
 
         foreach (var ctor in cls.Constructors)

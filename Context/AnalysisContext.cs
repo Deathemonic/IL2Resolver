@@ -7,5 +7,6 @@ public readonly record struct AnalysisContext(
     string[]? TypeFilter,
     bool IncludeDependencies,
     bool Verbose,
-    bool SuppressWarnings
+    bool SuppressWarnings,
+    ValidationContext ValidationContext
 );

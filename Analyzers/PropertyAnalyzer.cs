@@ -14,6 +14,9 @@ public static class PropertyAnalyzer
         var (getterInjectedName, getterInjectedParams) = GetInjectedICallInfo(propDef.GetMethod);
         var (setterInjectedName, setterInjectedParams) = GetInjectedICallInfo(propDef.SetMethod);
 
+        var getterWrapperInfo = GetWrapperInfo(propDef.GetMethod, getterIsICall);
+        var setterWrapperInfo = GetWrapperInfo(propDef.SetMethod, setterIsICall);
+
         return new Il2CppProperty
         {
             Name = propDef.Name.String,
@@ -28,7 +31,9 @@ public static class PropertyAnalyzer
             GetterInjectedICallName = getterInjectedName,
             GetterInjectedParams = getterInjectedParams,
             SetterInjectedICallName = setterInjectedName,
-            SetterInjectedParams = setterInjectedParams
+            SetterInjectedParams = setterInjectedParams,
+            GetterWrapperInfo = getterWrapperInfo,
+            SetterWrapperInfo = setterWrapperInfo
         };
     }
 
@@ -43,6 +48,14 @@ public static class PropertyAnalyzer
 
         var (wrappedName, _) = ICallAnalyzer.GetWrappedICallInfo(method);
         return (wrappedName, injectedParams);
+    }
+
+    private static WrapperInfo? GetWrapperInfo(MethodDef? method, bool isICall)
+    {
+        if (method is null || isICall)
+            return null;
+
+        return ICallAnalyzer.AnalyzeWrapperChain(method);
     }
 
     private static string GetSimpleTypeName(TypeSig? typeSig)

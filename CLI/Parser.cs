@@ -15,7 +15,8 @@ public static class Parser
         string[]? type,
         bool depends,
         bool verbose,
-        bool suppressWarnings)
+        bool suppressWarnings,
+        string? validate)
     {
         if (verbose) Log.EnableDebugLogging();
         if (suppressWarnings) Log.SetSuppressWarnings(true);
@@ -37,6 +38,26 @@ public static class Parser
             Environment.Exit(1);
         }
 
+        ValidationContext validationContext;
+        if (validate is not null)
+        {
+            if (!File.Exists(validate))
+            {
+                Log.Error($"Validation file not found: {validate}");
+                Log.Shutdown();
+                Environment.Exit(1);
+                return;
+            }
+
+            Log.Info($"Loading runtime dump: {validate}");
+            validationContext = ValidationContext.Load(validate);
+            Log.Info($"Validation enabled - will filter based on runtime dump");
+        }
+        else
+        {
+            validationContext = ValidationContext.Disabled();
+        }
+
         try
         {
             var analysisContext = new AnalysisContext(
@@ -46,7 +67,8 @@ public static class Parser
                 type,
                 depends,
                 verbose,
-                suppressWarnings
+                suppressWarnings,
+                validationContext
             );
 
             var schemas = AssemblyAnalyzer.Analyze(analysisContext);
@@ -64,7 +86,9 @@ public static class Parser
                 var generationContext = new GenerationContext(
                     schema,
                     validTypeNames,
-                    output
+                    output,
+                    validationContext.GetValueTypes(),
+                    validationContext.GetEnums()
                 );
 
                 FileGenerator.Generate(generationContext);

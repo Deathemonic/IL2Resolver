@@ -1,6 +1,7 @@
 using System.Text;
 using CaseConverter;
 using IL2Resolver.Context;
+using IL2Resolver.Mapping;
 using IL2Resolver.Schema;
 using IL2Resolver.Utils;
 
@@ -15,6 +16,7 @@ public static class ImplWriter
 
         var methodNameCounts = new Dictionary<string, int>();
         var csharpNameToRustName = new Dictionary<string, string>();
+        var emittedICalls = new HashSet<string>();
 
         if (cls.Constructors.Count > 0 && !cls.IsValueType)
             WriteConstructors(sb, cls, context.CurrentModuleName);
@@ -40,10 +42,10 @@ public static class ImplWriter
         methodNameCounts.Clear();
 
         foreach (var prop in cls.Properties)
-            WritePropertyMethods(sb, prop, cls, methodNameCounts, context.CurrentModuleName);
+            WritePropertyMethods(sb, prop, cls, methodNameCounts, context.CurrentModuleName, emittedICalls, context.ValueTypes, context.EnumTypes);
 
         foreach (var method in cls.Methods)
-            WriteMethod(sb, method, cls, methodNameCounts, csharpNameToRustName, context.CurrentModuleName);
+            WriteMethod(sb, method, cls, methodNameCounts, csharpNameToRustName, context.CurrentModuleName, emittedICalls, context.ValueTypes, context.EnumTypes);
 
         sb.AppendLine("}");
     }
@@ -70,7 +72,7 @@ public static class ImplWriter
     }
 
     private static void WritePropertyMethods(StringBuilder sb, Il2CppProperty prop, Il2CppClass cls,
-        Dictionary<string, int> methodNameCounts, string currentModuleName)
+        Dictionary<string, int> methodNameCounts, string currentModuleName, HashSet<string> emittedICalls, IReadOnlySet<string> valueTypes, IReadOnlySet<string> enumTypes)
     {
         var propName = prop.Name.ToSnakeCase();
         var propType = TypeNameUtils.StripModulePrefix(prop.Type, currentModuleName);
@@ -89,6 +91,10 @@ public static class ImplWriter
                 var icallName = BuildICallName(cls, $"get_{ilName}", []);
                 sb.AppendLine($"    #[unity_icall(\"{icallName}\")]");
                 sb.AppendLine($"    pub fn {getterName}({selfParam}) -> {propType} {{}}");
+            }
+            else if (prop.GetterWrapperInfo is { IsOutReturn: true } wrapperInfo)
+            {
+                WriteOutReturnPropertyGetter(sb, cls, getterName, propType, wrapperInfo, prop.IsStatic, currentModuleName);
             }
             else if (prop.GetterInjectedICallName is not null)
             {
@@ -143,9 +149,47 @@ public static class ImplWriter
         sb.AppendLine();
     }
 
+    private static void WriteOutReturnPropertyGetter(StringBuilder sb, Il2CppClass cls, string getterName,
+        string propType, WrapperInfo wrapperInfo, bool isStatic, string currentModuleName)
+    {
+        var icallName = BuildInjectedICallName(cls, wrapperInfo.ICallName, wrapperInfo.ICallCSharpParams);
+        var internalName = $"{getterName}_injected";
+        var selfParam = isStatic ? "" : "&self";
+        var selfParamWithComma = isStatic ? "" : "&self, ";
+
+        var returnType = wrapperInfo.OutReturnRustType is not null
+            ? TypeNameUtils.StripModulePrefix(wrapperInfo.OutReturnRustType, currentModuleName)
+            : propType;
+
+        var defaultExpr = FormatDefaultExpression(returnType);
+
+        sb.AppendLine($"    #[unity_icall(\"{icallName}\")]");
+        sb.AppendLine($"    pub fn {internalName}({selfParamWithComma}ret: &mut {returnType}) {{}}");
+        sb.AppendLine();
+
+        var selfPrefix = isStatic ? "Self::" : "self.";
+        sb.AppendLine($"    pub fn {getterName}({selfParam}) -> {returnType} {{");
+        sb.AppendLine($"        let mut ret = {defaultExpr};");
+        sb.AppendLine($"        {selfPrefix}{internalName}(&mut ret);");
+        sb.AppendLine("        ret");
+        sb.AppendLine("    }");
+    }
+
+    private static string FormatDefaultExpression(string rustType)
+    {
+        if (rustType.Contains('<') && rustType.Contains('>'))
+        {
+            var idx = rustType.IndexOf('<');
+            var baseName = rustType[..idx];
+            var genericPart = rustType[idx..];
+            return $"{baseName}::{genericPart}::default()";
+        }
+        return $"{rustType}::default()";
+    }
+
     private static void WriteMethod(StringBuilder sb, Il2CppMethod method, Il2CppClass cls,
         Dictionary<string, int> methodNameCounts, Dictionary<string, string> csharpNameToRustName,
-        string currentModuleName)
+        string currentModuleName, HashSet<string> emittedICalls, IReadOnlySet<string> valueTypes, IReadOnlySet<string> enumTypes)
     {
         if (method.GenericParameters.Count > 0 || method.RequiresTodo || method.Name == "IsValid")
             return;
@@ -180,6 +224,11 @@ public static class ImplWriter
                 sb.AppendLine();
                 return;
             }
+            case { WrapperInfo: not null } when method.WrapperInfo.Arguments.Count > 0:
+            {
+                WriteWrapperMethod(sb, cls, method, methodName, returnType, parameters, currentModuleName, emittedICalls, methodNameCounts, valueTypes, enumTypes);
+                return;
+            }
             case { WrappedICallName: not null, WrappedICallArgs: not null }
                 when method.WrappedICallArgs is ["__injected__"]:
             {
@@ -209,7 +258,7 @@ public static class ImplWriter
             }
         }
 
-        if (method.IsICall)
+        if (method.IsICall || method.ExistsInRuntime)
         {
             var icallName = BuildICallName(cls, ilName, method.Parameters);
             sb.AppendLine($"    #[unity_icall(\"{icallName}\")]");
@@ -226,6 +275,191 @@ public static class ImplWriter
         var returnClause = returnType == "()" ? "" : $" -> {returnType}";
         sb.AppendLine($"    pub fn {methodName}({parameters}){returnClause} {{}}");
         sb.AppendLine();
+    }
+
+    private static void WriteWrapperMethod(StringBuilder sb, Il2CppClass cls, Il2CppMethod method,
+        string methodName, string returnType, string parameters, string currentModuleName, HashSet<string> emittedICalls,
+        Dictionary<string, int> methodNameCounts, IReadOnlySet<string> valueTypes, IReadOnlySet<string> enumTypes)
+    {
+        var wrapperInfo = method.WrapperInfo!;
+        var icallName = BuildInjectedICallName(cls, wrapperInfo.ICallName, wrapperInfo.ICallCSharpParams);
+        var baseInternalName = wrapperInfo.ICallName.ToSnakeCase();
+        var internalName = baseInternalName == methodName
+            ? GetUniqueMethodName(baseInternalName, methodNameCounts)
+            : baseInternalName;
+        var selfPrefix = method.IsStatic ? "Self::" : "self.";
+
+        var callArgs = new List<string>();
+        foreach (var arg in wrapperInfo.Arguments)
+        {
+            if (arg.Value == "__out_return__")
+            {
+                callArgs.Add("ret");
+                continue;
+            }
+
+            if (arg.IsDefault)
+            {
+                callArgs.Add(arg.Value);
+            }
+            else
+            {
+                var argValue = RustKeywords.Escape(arg.Value);
+                if (arg.NeedsMutCopy)
+                    argValue = $"*{argValue}";
+                if (arg.NeedsIntoConversion)
+                    argValue = $"unsafe {{ std::mem::transmute({argValue}) }}";
+                callArgs.Add(argValue);
+            }
+        }
+
+        var needsICallEmit = emittedICalls.Add(icallName);
+
+        if (wrapperInfo.IsOutReturn)
+        {
+            var outReturnType = wrapperInfo.OutReturnRustType is not null
+                ? TypeNameUtils.StripModulePrefix(wrapperInfo.OutReturnRustType, currentModuleName)
+                : returnType;
+
+            var defaultExpr = FormatDefaultExpression(outReturnType);
+
+            if (needsICallEmit)
+            {
+                sb.AppendLine($"    #[unity_icall(\"{icallName}\")]");
+                sb.AppendLine($"    pub fn {internalName}({BuildICallParameterListSimple(wrapperInfo, method.IsStatic, currentModuleName, valueTypes, enumTypes)}) {{}}");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine($"    pub fn {methodName}({parameters}) -> {outReturnType} {{");
+            sb.AppendLine($"        let mut ret = {defaultExpr};");
+            sb.AppendLine($"        {selfPrefix}{internalName}({string.Join(", ", callArgs)});");
+            sb.AppendLine("        ret");
+            sb.AppendLine("    }");
+        }
+        else
+        {
+            if (needsICallEmit)
+            {
+                sb.AppendLine($"    #[unity_icall(\"{icallName}\")]");
+                sb.AppendLine($"    pub fn {internalName}({BuildICallParameterListSimple(wrapperInfo, method.IsStatic, currentModuleName, valueTypes, enumTypes)}) -> {returnType} {{}}");
+                sb.AppendLine();
+            }
+
+            var wrapperReturnClause = returnType == "()" ? "" : $" -> {returnType}";
+            sb.AppendLine($"    pub fn {methodName}({parameters}){wrapperReturnClause} {{");
+            sb.AppendLine($"        {selfPrefix}{internalName}({string.Join(", ", callArgs)})");
+            sb.AppendLine("    }");
+        }
+
+        sb.AppendLine();
+    }
+
+    private static string BuildICallParameterListSimple(WrapperInfo wrapperInfo, bool isStatic, string currentModuleName, IReadOnlySet<string> valueTypes, IReadOnlySet<string> enumTypes)
+    {
+        var parts = new List<string>();
+
+        if (!isStatic)
+            parts.Add("&self");
+
+        for (var i = 0; i < wrapperInfo.Arguments.Count; i++)
+        {
+            var arg = wrapperInfo.Arguments[i];
+            var csharpType = i < wrapperInfo.ICallCSharpParams.Count
+                ? wrapperInfo.ICallCSharpParams[i]
+                : "System.Object";
+            var isRef = csharpType.EndsWith("&");
+            var baseType = isRef ? csharpType[..^1] : csharpType;
+            var rustType = ConvertCSharpTypeToRustSimple(baseType, currentModuleName, valueTypes, enumTypes);
+
+            var icallParamName = i < wrapperInfo.ICallParamNames.Count
+                ? RustKeywords.Escape(wrapperInfo.ICallParamNames[i].ToSnakeCase())
+                : $"arg{i}";
+
+            if (arg.Value == "__out_return__")
+            {
+                parts.Add($"ret: {rustType}");
+            }
+            else
+            {
+                parts.Add($"{icallParamName}: {rustType}");
+            }
+        }
+
+        return string.Join(", ", parts);
+    }
+
+    private static string ConvertCSharpTypeToRustSimple(string csharpType, string currentModuleName, IReadOnlySet<string> valueTypes, IReadOnlySet<string> enumTypes)
+    {
+        if (csharpType.EndsWith("[]"))
+        {
+            var elementType = csharpType[..^2];
+            var rustElementType = TypeMappings.GetRustPrimitive(elementType, valueTypes, enumTypes);
+            if (rustElementType.StartsWith("Option<") && rustElementType.EndsWith(">"))
+                rustElementType = rustElementType[7..^1];
+            return $"Array<{rustElementType}>";
+        }
+
+        return TypeNameUtils.StripModulePrefix(TypeMappings.GetRustPrimitive(csharpType, valueTypes, enumTypes), currentModuleName);
+    }
+
+    private static string BuildICallParameterList(WrapperInfo wrapperInfo, bool isStatic, string currentModuleName)
+    {
+        var parts = new List<string>();
+
+        if (!isStatic)
+            parts.Add("&self");
+
+        for (var i = 0; i < wrapperInfo.Arguments.Count; i++)
+        {
+            var arg = wrapperInfo.Arguments[i];
+            var paramType = i < wrapperInfo.ICallCSharpParams.Count
+                ? ConvertCSharpTypeToRust(wrapperInfo.ICallCSharpParams[i], currentModuleName)
+                : "()";
+
+            var icallParamName = i < wrapperInfo.ICallParamNames.Count
+                ? RustKeywords.Escape(wrapperInfo.ICallParamNames[i].ToSnakeCase())
+                : $"arg{i}";
+
+            if (arg.Value == "__out_return__")
+            {
+                var baseType = paramType.StartsWith("&mut ") ? paramType[5..] : paramType.TrimEnd('&').Trim();
+                parts.Add($"ret: &mut {baseType}");
+            }
+            else
+            {
+                parts.Add($"{icallParamName}: {paramType}");
+            }
+        }
+
+        return string.Join(", ", parts);
+    }
+
+    private static string ConvertCSharpTypeToRust(string csharpType, string currentModuleName)
+    {
+        var isRef = csharpType.EndsWith("&");
+        var baseType = isRef ? csharpType[..^1] : csharpType;
+
+        string rustType;
+        if (baseType.EndsWith("[]"))
+        {
+            var elementType = baseType[..^2];
+            var rustElementType = TypeMappings.GetRustPrimitive(elementType);
+            if (rustElementType.StartsWith("Option<") && rustElementType.EndsWith(">"))
+                rustElementType = rustElementType[7..^1];
+            rustType = $"Array<{rustElementType}>";
+        }
+        else
+        {
+            rustType = TypeMappings.GetRustPrimitive(baseType);
+        }
+
+        if (isRef && rustType != "()")
+        {
+            var innerType = rustType.StartsWith("Option<") ? rustType[7..^1] : rustType;
+            return $"&mut {innerType}";
+        }
+
+        return TypeNameUtils.StripModulePrefix(rustType, currentModuleName);
     }
 
     private static string BuildParameterList(List<Il2CppParameter> parameters, bool hasSelf,

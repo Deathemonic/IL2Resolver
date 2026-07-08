@@ -1,5 +1,6 @@
 using CaseConverter;
 using dnlib.DotNet;
+using IL2Resolver.Context;
 using IL2Resolver.Mapping;
 using IL2Resolver.Schema;
 
@@ -7,18 +8,26 @@ namespace IL2Resolver.Analyzers;
 
 public static class MethodAnalyzer
 {
-    public static Il2CppMethod Analyze(MethodDef methodDef, string? overrideName = null)
+    public static Il2CppMethod Analyze(MethodDef methodDef, ValidationContext? validation = null, string? classFullName = null)
     {
         var (requiresTodo, todoReason) = TodoChecker.Check(methodDef.ReturnType);
 
         var isICall = ICallAnalyzer.IsICall(methodDef) || ICallAnalyzer.IsExternMethod(methodDef);
-        var (wrappedICallName, wrappedICallArgs) =
-            !isICall ? ICallAnalyzer.GetWrappedICallInfo(methodDef) : (null, null);
-        var injectedICallParams = !isICall ? ICallAnalyzer.GetInjectedICallParams(methodDef) : null;
-        var staticDelegate =
-            !isICall && wrappedICallName is null ? ICallAnalyzer.GetStaticDelegateInfo(methodDef) : null;
 
-        var methodName = overrideName ?? methodDef.Name.String;
+        WrapperInfo? wrapperInfo = null;
+        var existsInRuntime = validation is null || !validation.IsEnabled ||
+                              validation.MethodExists(classFullName ?? "", methodDef.Name.String);
+
+        if (!isICall && existsInRuntime)
+            wrapperInfo = ICallAnalyzer.AnalyzeWrapperChain(methodDef);
+
+        var (wrappedICallName, wrappedICallArgs) =
+            !isICall && wrapperInfo is null ? ICallAnalyzer.GetWrappedICallInfo(methodDef) : (null, null);
+        var injectedICallParams = !isICall && wrapperInfo is null ? ICallAnalyzer.GetInjectedICallParams(methodDef) : null;
+        var staticDelegate =
+            !isICall && wrapperInfo is null && wrappedICallName is null ? ICallAnalyzer.GetStaticDelegateInfo(methodDef) : null;
+
+        var methodName = methodDef.Name.String;
 
         if (methodName.EndsWith("_Injected"))
             methodName = methodName[..^9];
@@ -37,7 +46,9 @@ public static class MethodAnalyzer
             StaticDelegateMethod = staticDelegate?.MethodName,
             StaticDelegateParams = staticDelegate?.Params,
             RequiresTodo = requiresTodo,
-            TodoReason = todoReason
+            TodoReason = todoReason,
+            WrapperInfo = wrapperInfo,
+            ExistsInRuntime = existsInRuntime
         };
 
         foreach (var genericParam in methodDef.GenericParameters)

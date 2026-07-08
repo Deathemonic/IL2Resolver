@@ -1,3 +1,4 @@
+using CaseConverter;
 using dnlib.DotNet;
 using dnlib.DotNet.Emit;
 using IL2Resolver.Mapping;
@@ -8,16 +9,13 @@ namespace IL2Resolver.Analyzers;
 
 public static class ICallAnalyzer
 {
-    public static bool IsICall(MethodDef methodDef)
-    {
-        if ((methodDef.ImplAttributes & MethodImplAttributes.InternalCall) != 0)
-            return true;
+    public static bool IsICall(MethodDef methodDef) =>
+        (methodDef.ImplAttributes & MethodImplAttributes.InternalCall) != 0;
 
-        foreach (var attr in methodDef.CustomAttributes)
-            if (attr.TypeFullName is "UnityEngine.Bindings.FreeFunctionAttribute"
-                or "UnityEngine.Bindings.NativeMethodAttribute"
-                or "FreeFunctionAttribute" or "NativeMethodAttribute")
-                return true;
+    public static bool IsCallableMethod(MethodDef methodDef)
+    {
+        if (IsICall(methodDef) || IsExternMethod(methodDef))
+            return true;
 
         return false;
     }
@@ -384,6 +382,12 @@ public static class ICallAnalyzer
 
     private static bool AreTypesCompatible(TypeSig wrapperType, TypeSig targetType)
     {
+        return AreTypesCompatible(wrapperType, targetType, out _);
+    }
+
+    private static bool AreTypesCompatible(TypeSig wrapperType, TypeSig targetType, out bool needsIntoConversion)
+    {
+        needsIntoConversion = false;
         var wrapperIsRef = wrapperType is ByRefSig;
         var targetIsRef = targetType is ByRefSig;
 
@@ -408,7 +412,32 @@ public static class ICallAnalyzer
         if (wrapperDef is null || targetDef is null)
             return false;
 
-        return wrapperDef.IsClass && targetDef.FullName == "System.Object";
+        // Check if wrapper type inherits from target type (e.g., Cubemap inherits from Texture)
+        if (wrapperDef.IsClass && InheritsFrom(wrapperDef, targetDef))
+        {
+            needsIntoConversion = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool InheritsFrom(TypeDef derivedType, TypeDef baseType)
+    {
+        var current = derivedType.BaseType;
+        while (current is not null)
+        {
+            if (current.FullName == baseType.FullName)
+                return true;
+
+            var currentDef = current.ResolveTypeDef();
+            if (currentDef is null)
+                break;
+
+            current = currentDef.BaseType;
+        }
+
+        return false;
     }
 
     private static string GetCSharpTypeName(TypeSig typeSig)
@@ -451,4 +480,463 @@ public static class ICallAnalyzer
     }
 
     public record StaticDelegateInfo(string FieldName, string MethodName, List<Il2CppParameter> Params);
+
+    public static WrapperInfo? AnalyzeWrapperChain(MethodDef methodDef)
+    {
+        if (!methodDef.HasBody || methodDef.Body.Instructions.Count < 2)
+            return null;
+
+        var (targetICall, argMappings) = WalkChainToICall(methodDef, []);
+        if (targetICall is null || argMappings is null)
+            return null;
+
+        var icallParams = targetICall.Parameters.Where(p => p.IsNormalMethodParameter).ToList();
+        var wrapperParams = methodDef.Parameters.Where(p => p.IsNormalMethodParameter).ToList();
+
+        var isOutReturn = DetectOutReturnPattern(methodDef, targetICall);
+        string? outReturnType = null;
+        string? outReturnRustType = null;
+
+        if (isOutReturn && icallParams.Count > 0)
+        {
+            var outParam = icallParams.FirstOrDefault(p => p.ParamDef?.IsOut == true);
+            if (outParam is not null)
+            {
+                var baseType = outParam.Type is ByRefSig byRef ? byRef.Next : outParam.Type;
+                outReturnType = GetCSharpTypeName(baseType);
+                outReturnRustType = RustTypeMapper.Map(baseType);
+            }
+        }
+
+        var arguments = BuildICallArguments(wrapperParams, icallParams, argMappings, isOutReturn);
+        if (arguments is null)
+            return null;
+
+        var hasDefaults = arguments.Any(a => a.IsDefault);
+        var hasMutCopy = arguments.Any(a => a.NeedsMutCopy);
+        var hasIntoConversion = arguments.Any(a => a.NeedsIntoConversion);
+        var hasThisArg = arguments.Any(a => a.Value == "__this__" || a.SourceParam == "__this__");
+
+        if (hasThisArg)
+            return null;
+
+        if (icallParams.Count > 0 && targetICall.IsStatic && !methodDef.IsStatic)
+        {
+            var firstParamType = icallParams[0].Type;
+            var baseType = firstParamType is ByRefSig byRef ? byRef.Next : firstParamType;
+            if (baseType.FullName == methodDef.DeclaringType?.FullName)
+                return null;
+        }
+
+        if (!isOutReturn && !hasDefaults && !hasMutCopy && !hasIntoConversion)
+            return null;
+
+        var icallCSharpParams = icallParams.Select(p => GetCSharpTypeName(p.Type)).ToList();
+        var icallParamNames = icallParams.Select(p => p.Name).ToList();
+
+        return new WrapperInfo
+        {
+            ICallName = targetICall.Name.String,
+            ICallCSharpParams = icallCSharpParams,
+            ICallParamNames = icallParamNames,
+            Arguments = arguments,
+            IsOutReturn = isOutReturn,
+            OutReturnType = outReturnType,
+            OutReturnRustType = outReturnRustType
+        };
+    }
+
+    private static (MethodDef? ICall, Dictionary<int, ArgumentMapping>? Mappings) WalkChainToICall(
+        MethodDef methodDef, HashSet<string> visited)
+    {
+        if (!visited.Add(methodDef.FullName))
+            return (null, null);
+
+        if (!methodDef.HasBody)
+            return (null, null);
+
+        var instructions = methodDef.Body.Instructions;
+        MethodDef? calledMethod = null;
+        var callInstruction = -1;
+
+        for (var i = 0; i < instructions.Count; i++)
+        {
+            var instr = instructions[i];
+            if (instr.OpCode.Code is not (Code.Call or Code.Callvirt))
+                continue;
+
+            if (instr.Operand is not IMethodDefOrRef methodRef)
+                continue;
+
+            var resolved = methodRef.ResolveMethodDef();
+            if (resolved is null)
+                continue;
+
+            if (resolved.DeclaringType?.FullName != methodDef.DeclaringType?.FullName)
+                continue;
+
+            if (calledMethod is not null)
+                return (null, null);
+
+            calledMethod = resolved;
+            callInstruction = i;
+        }
+
+        if (calledMethod is null || callInstruction < 0)
+            return (null, null);
+
+        var argMappings = ExtractArgumentMappings(methodDef, calledMethod, instructions, callInstruction);
+        if (argMappings is null)
+            return (null, null);
+
+        if (IsICall(calledMethod) || IsExternMethod(calledMethod))
+            return (calledMethod, argMappings);
+
+        var (nestedICall, nestedMappings) = WalkChainToICall(calledMethod, visited);
+        if (nestedICall is null || nestedMappings is null)
+            return (null, null);
+
+        var combinedMappings = CombineMappings(argMappings, nestedMappings, methodDef, calledMethod);
+        return (nestedICall, combinedMappings);
+    }
+
+    private static Dictionary<int, ArgumentMapping>? ExtractArgumentMappings(
+        MethodDef wrapper, MethodDef target, IList<Instruction> instructions, int callIndex)
+    {
+        var wrapperParams = wrapper.Parameters.Where(p => p.IsNormalMethodParameter).ToList();
+        var targetParams = target.Parameters.Where(p => p.IsNormalMethodParameter).ToList();
+        var mappings = new Dictionary<int, ArgumentMapping>();
+
+        var argStack = new List<ArgumentMapping>();
+
+        for (var i = 0; i < callIndex; i++)
+        {
+            var instr = instructions[i];
+            var (mapping, stackEffect) = InstructionToArgumentMapping(instr, wrapperParams, wrapper.IsStatic, argStack);
+
+            if (stackEffect < 0)
+            {
+                for (var j = 0; j < -stackEffect && argStack.Count > 0; j++)
+                    argStack.RemoveAt(argStack.Count - 1);
+            }
+
+            if (mapping is null && stackEffect > 0)
+                return null;
+
+            if (mapping is not null)
+                argStack.Add(mapping);
+        }
+
+        var expectedArgs = targetParams.Count;
+        if (!target.IsStatic)
+            expectedArgs++;
+
+        if (argStack.Count < expectedArgs)
+            return null;
+
+        var startIndex = argStack.Count - expectedArgs;
+
+        if (!target.IsStatic)
+            startIndex++;
+
+        for (var i = 0; i < targetParams.Count; i++)
+        {
+            var targetParam = targetParams[i];
+            var sourceMapping = argStack[startIndex + i];
+
+            if (sourceMapping.Value == "__out_local__")
+            {
+                mappings[i] = new ArgumentMapping("__out_local__", false, false);
+                continue;
+            }
+
+            if (sourceMapping.SourceParam is null)
+            {
+                mappings[i] = sourceMapping;
+                continue;
+            }
+
+            var srcParam = wrapperParams.FirstOrDefault(p => p.Name == sourceMapping.SourceParam);
+            if (srcParam is null)
+            {
+                mappings[i] = sourceMapping;
+                continue;
+            }
+
+            if (!AreTypesCompatible(srcParam.Type, targetParam.Type, out var needsIntoConversion))
+                return null;
+
+            var needsMutCopy = targetParam.Type is ByRefSig && srcParam.Type is not ByRefSig;
+
+            mappings[i] = sourceMapping with
+            {
+                NeedsMutCopy = needsMutCopy,
+                NeedsIntoConversion = needsIntoConversion
+            };
+        }
+
+        return mappings;
+    }
+
+    private static (ArgumentMapping? Mapping, int StackEffect) InstructionToArgumentMapping(
+        Instruction instr, List<Parameter> wrapperParams, bool isStatic, List<ArgumentMapping> currentStack)
+    {
+        switch (instr.OpCode.Code)
+        {
+            case Code.Ldarg_0:
+                if (isStatic && wrapperParams.Count > 0)
+                    return (new ArgumentMapping(wrapperParams[0].Name, false, false), 1);
+                if (!isStatic)
+                    return (new ArgumentMapping("__this__", false, false), 1);
+                return (null, 0);
+
+            case Code.Ldarg_1:
+                var idx1 = isStatic ? 1 : 0;
+                if (idx1 < wrapperParams.Count)
+                    return (new ArgumentMapping(wrapperParams[idx1].Name, false, false), 1);
+                return (null, 0);
+
+            case Code.Ldarg_2:
+                var idx2 = isStatic ? 2 : 1;
+                if (idx2 < wrapperParams.Count)
+                    return (new ArgumentMapping(wrapperParams[idx2].Name, false, false), 1);
+                return (null, 0);
+
+            case Code.Ldarg_3:
+                var idx3 = isStatic ? 3 : 2;
+                if (idx3 < wrapperParams.Count)
+                    return (new ArgumentMapping(wrapperParams[idx3].Name, false, false), 1);
+                return (null, 0);
+
+            case Code.Ldarg_S or Code.Ldarg:
+                if (instr.Operand is Parameter param && wrapperParams.Contains(param))
+                    return (new ArgumentMapping(param.Name, false, false), 1);
+                return (null, 0);
+
+            case Code.Ldarga_S or Code.Ldarga:
+                if (instr.Operand is Parameter refParam && wrapperParams.Contains(refParam))
+                    return (new ArgumentMapping(refParam.Name, false, true), 1);
+                return (null, 0);
+
+            case Code.Ldloca_S or Code.Ldloca:
+                return (new ArgumentMapping("__out_local__", false, false), 1);
+
+            case Code.Ldc_I4_0:
+                return (new ArgumentMapping("0", true, false), 1);
+            case Code.Ldc_I4_1:
+                return (new ArgumentMapping("1", true, false), 1);
+            case Code.Ldc_I4_2:
+                return (new ArgumentMapping("2", true, false), 1);
+            case Code.Ldc_I4_3:
+                return (new ArgumentMapping("3", true, false), 1);
+            case Code.Ldc_I4_4:
+                return (new ArgumentMapping("4", true, false), 1);
+            case Code.Ldc_I4_5:
+                return (new ArgumentMapping("5", true, false), 1);
+            case Code.Ldc_I4_6:
+                return (new ArgumentMapping("6", true, false), 1);
+            case Code.Ldc_I4_7:
+                return (new ArgumentMapping("7", true, false), 1);
+            case Code.Ldc_I4_8:
+                return (new ArgumentMapping("8", true, false), 1);
+            case Code.Ldc_I4_M1:
+                return (new ArgumentMapping("-1", true, false), 1);
+
+            case Code.Ldc_I4_S:
+                return (new ArgumentMapping(((sbyte)instr.Operand).ToString(), true, false), 1);
+            case Code.Ldc_I4:
+                return (new ArgumentMapping(((int)instr.Operand).ToString(), true, false), 1);
+            case Code.Ldc_I8:
+                return (new ArgumentMapping(((long)instr.Operand).ToString(), true, false), 1);
+            case Code.Ldc_R4:
+                return (new ArgumentMapping(TypeMappings.FormatFloat((float)instr.Operand), true, false), 1);
+            case Code.Ldc_R8:
+                return (new ArgumentMapping(TypeMappings.FormatDouble((double)instr.Operand), true, false), 1);
+
+            case Code.Ldnull:
+                return (new ArgumentMapping("None", true, false), 1);
+
+            case Code.Call when instr.Operand is IMethodDefOrRef methodRef:
+            {
+                var resolved = methodRef.ResolveMethodDef();
+                var paramCount = resolved?.Parameters.Count(p => p.IsNormalMethodParameter) ?? 0;
+                var isInstance = resolved is { IsStatic: false };
+                if (isInstance) paramCount++;
+                
+                var typeName = methodRef.DeclaringType?.Name.String ?? "";
+                var methodName = methodRef.Name.String;
+                var rustDefault = TypeMappings.GetDefaultMethod(typeName, methodName);
+                if (rustDefault is not null)
+                    return (new ArgumentMapping(rustDefault, true, false), 1 - paramCount);
+                return (null, 1);
+            }
+
+            case Code.Ldsfld when instr.Operand is IField field:
+                var fieldTypeName = field.DeclaringType?.Name.String ?? "";
+                var fieldName = field.Name.String;
+                var fieldDefault = TypeMappings.GetDefaultField(fieldTypeName, fieldName);
+                if (fieldDefault is not null)
+                    return (new ArgumentMapping(fieldDefault, true, false), 1);
+                return (null, 1);
+
+            case Code.Ldfld:
+                return (null, 1);
+
+            case Code.Nop or Code.Ret:
+                return (null, 0);
+
+            case Code.Conv_I or Code.Conv_I1 or Code.Conv_I2 or Code.Conv_I4 or Code.Conv_I8
+                or Code.Conv_U or Code.Conv_U1 or Code.Conv_U2 or Code.Conv_U4 or Code.Conv_U8
+                or Code.Conv_R4 or Code.Conv_R8:
+                return (null, 0);
+
+            case Code.Box or Code.Unbox or Code.Unbox_Any or Code.Castclass or Code.Isinst:
+                return (null, 0);
+
+            case Code.Dup:
+                if (currentStack.Count > 0)
+                    return (currentStack[^1], 1);
+                return (null, 1);
+
+            default:
+                return (null, 0);
+        }
+    }
+
+    private static Dictionary<int, ArgumentMapping>? CombineMappings(
+        Dictionary<int, ArgumentMapping> outerMappings,
+        Dictionary<int, ArgumentMapping> innerMappings,
+        MethodDef outerMethod,
+        MethodDef innerMethod)
+    {
+        var innerParams = innerMethod.Parameters.Where(p => p.IsNormalMethodParameter).ToList();
+        var combined = new Dictionary<int, ArgumentMapping>();
+
+        foreach (var (icallIdx, innerMapping) in innerMappings)
+        {
+            if (innerMapping.IsDefault)
+            {
+                combined[icallIdx] = innerMapping;
+                continue;
+            }
+
+            var innerParamIdx = innerParams.FindIndex(p => p.Name == innerMapping.SourceParam);
+            if (innerParamIdx < 0 || !outerMappings.TryGetValue(innerParamIdx, out var outerMapping))
+                return null;
+
+            var needsMutCopy = innerMapping.NeedsMutCopy || outerMapping.NeedsMutCopy;
+            var needsIntoConversion = innerMapping.NeedsIntoConversion || outerMapping.NeedsIntoConversion;
+            combined[icallIdx] = outerMapping with { NeedsMutCopy = needsMutCopy, NeedsIntoConversion = needsIntoConversion };
+        }
+
+        return combined;
+    }
+
+    private static List<ICallArgument>? BuildICallArguments(
+        List<Parameter> wrapperParams,
+        List<Parameter> icallParams,
+        Dictionary<int, ArgumentMapping> mappings,
+        bool isOutReturn)
+    {
+        var arguments = new List<ICallArgument>();
+
+        for (var i = 0; i < icallParams.Count; i++)
+        {
+            var icallParam = icallParams[i];
+
+            if (!mappings.TryGetValue(i, out var mapping))
+                return null;
+
+            if (mapping.Value == "__out_local__")
+            {
+                if (isOutReturn && icallParam.ParamDef?.IsOut == true)
+                {
+                    arguments.Add(new ICallArgument
+                    {
+                        Value = "__out_return__",
+                        IsDefault = false,
+                        NeedsMutCopy = false,
+                        SourceParam = null
+                    });
+                }
+                else
+                {
+                    return null;
+                }
+                continue;
+            }
+
+            if (isOutReturn && icallParam.ParamDef?.IsOut == true)
+            {
+                arguments.Add(new ICallArgument
+                {
+                    Value = "__out_return__",
+                    IsDefault = false,
+                    NeedsMutCopy = false,
+                    SourceParam = null
+                });
+                continue;
+            }
+
+            var rustValue = mapping.IsDefault
+                ? ConvertDefaultValue(mapping.Value, icallParam.Type)
+                : mapping.Value.ToSnakeCase();
+
+            arguments.Add(new ICallArgument
+            {
+                Value = rustValue,
+                IsDefault = mapping.IsDefault,
+                NeedsMutCopy = mapping.NeedsMutCopy,
+                NeedsIntoConversion = mapping.NeedsIntoConversion,
+                SourceParam = mapping.IsDefault ? null : mapping.Value
+            });
+        }
+
+        return arguments;
+    }
+
+    private static string ConvertDefaultValue(string value, TypeSig paramType)
+    {
+        var baseType = paramType is ByRefSig byRef ? byRef.Next : paramType;
+        var typeName = baseType.FullName;
+
+        if (typeName == "System.Boolean")
+        {
+            return value switch
+            {
+                "0" => "false",
+                "1" => "true",
+                _ => value
+            };
+        }
+
+        var typeDef = baseType.TryGetTypeDef();
+        if (typeDef is { IsEnum: true })
+        {
+            var rustTypeName = typeDef.Name.String.ToPascalCase();
+            return $"unsafe {{ std::mem::transmute::<i32, {rustTypeName}>({value}) }}";
+        }
+
+        return value;
+    }
+
+    private static bool DetectOutReturnPattern(MethodDef wrapper, MethodDef icall)
+    {
+        if (wrapper.ReturnType.FullName == "System.Void")
+            return false;
+
+        var icallParams = icall.Parameters.Where(p => p.IsNormalMethodParameter).ToList();
+        var outParam = icallParams.FirstOrDefault(p => p.ParamDef?.IsOut == true);
+
+        if (outParam is null)
+            return false;
+
+        var outType = outParam.Type is ByRefSig byRef ? byRef.Next : outParam.Type;
+        return AreTypesCompatible(wrapper.ReturnType, outType);
+    }
+
+    private record ArgumentMapping(string Value, bool IsDefault, bool NeedsMutCopy, bool NeedsIntoConversion = false, string? SourceParam = null)
+    {
+        public string? SourceParam { get; init; } = SourceParam ?? (IsDefault ? null : Value);
+    }
 }

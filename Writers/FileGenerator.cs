@@ -18,20 +18,20 @@ public static class FileGenerator
         var moduleOutputPath = Path.Combine(context.OutputPath, moduleFolderName);
 
         GenerateEnumFiles(schema, moduleOutputPath);
-        GenerateClassFiles(schema, moduleOutputPath, context.ValidTypeNames);
+        GenerateClassFiles(schema, moduleOutputPath, context.ValidTypeNames, context.ValueTypes, context.EnumTypes);
         GenerateModFile(schema, moduleOutputPath);
 
         Log.Info("Generation complete");
     }
 
-    private static void GenerateClassFiles(Il2CppSchema schema, string outputPath, FrozenSet<string> validTypeNames)
+    private static void GenerateClassFiles(Il2CppSchema schema, string outputPath, FrozenSet<string> validTypeNames, IReadOnlySet<string> valueTypes, IReadOnlySet<string> enumTypes)
     {
         foreach (var cls in schema.Classes)
             try
             {
                 var fileName = cls.Name.ToSnakeCase();
                 var filePath = Path.Combine(outputPath, fileName + ".rs");
-                var content = ModuleWriter.GenerateClass(cls, schema, validTypeNames);
+                var content = ModuleWriter.GenerateClass(cls, schema, validTypeNames, valueTypes, enumTypes);
                 WriteFile(filePath, content);
                 Log.Verbose($"Generated: {cls.Name}");
             }
