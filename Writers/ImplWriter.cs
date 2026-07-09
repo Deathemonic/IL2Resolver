@@ -294,7 +294,7 @@ public static class ImplWriter
         {
             if (arg.Value == "__out_return__")
             {
-                callArgs.Add("ret");
+                callArgs.Add("&mut ret");
                 continue;
             }
 
@@ -368,8 +368,9 @@ public static class ImplWriter
                 ? wrapperInfo.ICallCSharpParams[i]
                 : "System.Object";
             var isRef = csharpType.EndsWith("&");
-            var baseType = isRef ? csharpType[..^1] : csharpType;
-            var rustType = ConvertCSharpTypeToRustSimple(baseType, currentModuleName, valueTypes, enumTypes);
+            var rustType = i < wrapperInfo.ICallRustParams.Count
+                ? TypeNameUtils.StripModulePrefix(wrapperInfo.ICallRustParams[i], currentModuleName)
+                : ConvertCSharpTypeToRustSimple(isRef ? csharpType[..^1] : csharpType, currentModuleName, valueTypes, enumTypes);
 
             var icallParamName = i < wrapperInfo.ICallParamNames.Count
                 ? RustKeywords.Escape(wrapperInfo.ICallParamNames[i].ToSnakeCase())
@@ -377,11 +378,15 @@ public static class ImplWriter
 
             if (arg.Value == "__out_return__")
             {
-                parts.Add($"ret: {rustType}");
+                var baseRustType = rustType.StartsWith("&mut ", StringComparison.Ordinal) ? rustType[5..] : rustType;
+                parts.Add($"ret: &mut {baseRustType}");
             }
             else
             {
-                parts.Add($"{icallParamName}: {rustType}");
+                var paramType = isRef && !rustType.StartsWith("&mut ", StringComparison.Ordinal)
+                    ? $"&mut {rustType}"
+                    : rustType;
+                parts.Add($"{icallParamName}: {paramType}");
             }
         }
 

@@ -16,6 +16,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <Compile Remove="_no\**\*.cs" />
+    </ItemGroup>
+
+    <ItemGroup>
         <PackageReference Include="CaseConverter" Version="2.0.1"/>
         <PackageReference Include="ConsoleAppFramework" Version="5.7.2">
             <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

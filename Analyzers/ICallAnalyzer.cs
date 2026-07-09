@@ -10,7 +10,7 @@ namespace IL2Resolver.Analyzers;
 public static class ICallAnalyzer
 {
     public static bool IsICall(MethodDef methodDef) =>
-        (methodDef.ImplAttributes & MethodImplAttributes.InternalCall) != 0;
+        !methodDef.HasBody && (methodDef.ImplAttributes & MethodImplAttributes.InternalCall) != 0;
 
     public static bool IsCallableMethod(MethodDef methodDef)
     {
@@ -26,6 +26,9 @@ public static class ICallAnalyzer
             ((methodDef.ImplAttributes & MethodImplAttributes.InternalCall) != 0 ||
              (methodDef.Attributes & MethodAttributes.PinvokeImpl) != 0))
             return true;
+
+        if (methodDef.HasBody)
+            return false;
 
         foreach (var arg in methodDef.CustomAttributes
                      .AsValueEnumerable()
@@ -532,12 +535,18 @@ public static class ICallAnalyzer
             return null;
 
         var icallCSharpParams = icallParams.Select(p => GetCSharpTypeName(p.Type)).ToList();
+        var icallRustParams = icallParams.Select(p =>
+        {
+            var isOut = p.ParamDef?.IsOut ?? false;
+            return RustTypeMapper.Map(p.Type, true, isOut);
+        }).ToList();
         var icallParamNames = icallParams.Select(p => p.Name).ToList();
 
         return new WrapperInfo
         {
             ICallName = targetICall.Name.String,
             ICallCSharpParams = icallCSharpParams,
+            ICallRustParams = icallRustParams,
             ICallParamNames = icallParamNames,
             Arguments = arguments,
             IsOutReturn = isOutReturn,

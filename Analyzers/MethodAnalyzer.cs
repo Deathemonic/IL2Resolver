@@ -19,13 +19,17 @@ public static class MethodAnalyzer
                               validation.MethodExists(classFullName ?? "", methodDef.Name.String);
 
         if (!isICall && existsInRuntime)
-            wrapperInfo = ICallAnalyzer.AnalyzeWrapperChain(methodDef);
+        {
+            var candidateWrapper = ICallAnalyzer.AnalyzeWrapperChain(methodDef);
+            if (candidateWrapper is { IsOutReturn: true } &&
+                candidateWrapper.ICallName.EndsWith("_Injected", StringComparison.Ordinal) &&
+                candidateWrapper.Arguments.All(arg => !arg.IsDefault))
+                wrapperInfo = candidateWrapper;
+        }
 
-        var (wrappedICallName, wrappedICallArgs) =
-            !isICall && wrapperInfo is null ? ICallAnalyzer.GetWrappedICallInfo(methodDef) : (null, null);
-        var injectedICallParams = !isICall && wrapperInfo is null ? ICallAnalyzer.GetInjectedICallParams(methodDef) : null;
-        var staticDelegate =
-            !isICall && wrapperInfo is null && wrappedICallName is null ? ICallAnalyzer.GetStaticDelegateInfo(methodDef) : null;
+        var (wrappedICallName, wrappedICallArgs) = (null as string, null as List<string>);
+        List<string>? injectedICallParams = null;
+        var staticDelegate = !isICall && wrapperInfo is null ? ICallAnalyzer.GetStaticDelegateInfo(methodDef) : null;
 
         var methodName = methodDef.Name.String;
 

@@ -4,6 +4,7 @@ public sealed class WrapperInfo
 {
     public required string ICallName { get; init; }
     public required List<string> ICallCSharpParams { get; init; }
+    public required List<string> ICallRustParams { get; init; }
     public required List<string> ICallParamNames { get; init; }
     public required List<ICallArgument> Arguments { get; init; }
     public bool IsOutReturn { get; init; }
