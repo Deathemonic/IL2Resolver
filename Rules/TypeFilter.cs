@@ -78,7 +78,10 @@ public static class TypeFilter
     private static IEnumerable<TypeDef> DeduplicateByName(IEnumerable<TypeDef> types) =>
         types
             .GroupBy(t => t.Name.String)
-            .Select(g => g.OrderBy(t => GetNamespaceDepth(t.Namespace?.String)).First());
+            .Select(g => g
+                .OrderBy(t => t.IsNested ? 1 : 0)
+                .ThenBy(t => GetNamespaceDepth(t.Namespace?.String))
+                .First());
 
     private static int GetNamespaceDepth(string? ns)
     {
