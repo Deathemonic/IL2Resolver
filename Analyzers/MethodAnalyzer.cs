@@ -21,7 +21,7 @@ public static class MethodAnalyzer
         if (!isICall && existsInRuntime)
         {
             var candidateWrapper = ICallAnalyzer.AnalyzeWrapperChain(methodDef);
-            if (candidateWrapper is { IsOutReturn: true } &&
+            if (candidateWrapper is not null &&
                 candidateWrapper.ICallName.EndsWith("_Injected", StringComparison.Ordinal) &&
                 candidateWrapper.Arguments.All(arg => !arg.IsDefault))
                 wrapperInfo = candidateWrapper;

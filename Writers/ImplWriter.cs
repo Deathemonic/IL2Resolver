@@ -99,9 +99,17 @@ public static class ImplWriter
             else if (prop.GetterInjectedICallName is not null)
             {
                 var icallName = BuildInjectedICallName(cls, prop.GetterInjectedICallName, prop.GetterInjectedParams);
-                sb.AppendLine($"    #[unity_icall(\"{icallName}\")]");
+                var internalGetterName = $"{getterName}_injected";
                 var selfParamWithComma = prop.IsStatic ? "" : "&self, ";
-                sb.AppendLine($"    pub fn {getterName}({selfParamWithComma}ret: &mut {propType}) {{}}");
+                var getterSelfPrefix = prop.IsStatic ? "Self::" : "self.";
+                sb.AppendLine($"    #[unity_icall(\"{icallName}\")]");
+                sb.AppendLine($"    pub fn {internalGetterName}({selfParamWithComma}ret: &mut {propType}) {{}}");
+                sb.AppendLine();
+                sb.AppendLine($"    pub fn {getterName}({selfParam}) -> {propType} {{");
+                sb.AppendLine($"        let mut ret = {FormatDefaultExpression(propType)};");
+                sb.AppendLine($"        {getterSelfPrefix}{internalGetterName}(&mut ret);");
+                sb.AppendLine("        ret");
+                sb.AppendLine("    }");
             }
             else if (prop.IsStatic)
             {
@@ -132,8 +140,15 @@ public static class ImplWriter
         else if (prop.SetterInjectedICallName is not null)
         {
             var icallName = BuildInjectedICallName(cls, prop.SetterInjectedICallName, prop.SetterInjectedParams);
+            var internalSetterName = $"{setterName}_injected";
+            var setterSelfPrefix = prop.IsStatic ? "Self::" : "self.";
             sb.AppendLine($"    #[unity_icall(\"{icallName}\")]");
-            sb.AppendLine($"    pub fn {setterName}({setterSelfParam}value: &mut {propType}) {{}}");
+            sb.AppendLine($"    pub fn {internalSetterName}({setterSelfParam}value: &mut {propType}) {{}}");
+            sb.AppendLine();
+            sb.AppendLine($"    pub fn {setterName}({setterSelfParam}value: {propType}) {{");
+            sb.AppendLine("        let mut value = value;");
+            sb.AppendLine($"        {setterSelfPrefix}{internalSetterName}(&mut value);");
+            sb.AppendLine("    }");
         }
         else if (prop.IsStatic)
         {
@@ -290,6 +305,7 @@ public static class ImplWriter
         var selfPrefix = method.IsStatic ? "Self::" : "self.";
 
         var callArgs = new List<string>();
+        var prologue = new List<string>();
         foreach (var arg in wrapperInfo.Arguments)
         {
             if (arg.Value == "__out_return__")
@@ -305,10 +321,14 @@ public static class ImplWriter
             else
             {
                 var argValue = RustKeywords.Escape(arg.Value);
-                if (arg.NeedsMutCopy)
-                    argValue = $"*{argValue}";
                 if (arg.NeedsIntoConversion)
                     argValue = $"unsafe {{ std::mem::transmute({argValue}) }}";
+                if (arg.NeedsMutCopy)
+                {
+                    var localName = RustKeywords.Escape(arg.Value);
+                    prologue.Add($"        let mut {localName} = {argValue};");
+                    argValue = $"&mut {localName}";
+                }
                 callArgs.Add(argValue);
             }
         }
@@ -331,6 +351,8 @@ public static class ImplWriter
             }
 
             sb.AppendLine($"    pub fn {methodName}({parameters}) -> {outReturnType} {{");
+            foreach (var line in prologue)
+                sb.AppendLine(line);
             sb.AppendLine($"        let mut ret = {defaultExpr};");
             sb.AppendLine($"        {selfPrefix}{internalName}({string.Join(", ", callArgs)});");
             sb.AppendLine("        ret");
@@ -347,6 +369,8 @@ public static class ImplWriter
 
             var wrapperReturnClause = returnType == "()" ? "" : $" -> {returnType}";
             sb.AppendLine($"    pub fn {methodName}({parameters}){wrapperReturnClause} {{");
+            foreach (var line in prologue)
+                sb.AppendLine(line);
             sb.AppendLine($"        {selfPrefix}{internalName}({string.Join(", ", callArgs)})");
             sb.AppendLine("    }");
         }
